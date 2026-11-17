@@ -44,10 +44,14 @@ export function ensureReady(): Promise<void> {
     ready = (async () => {
       const db = getDb();
       if ((await db.users.count()) === 0) {
+        // Hash PINs BEFORE the transaction: Safari closes an IndexedDB transaction
+        // as soon as it waits on anything that is not the database itself.
+        const ownerPin = await hashPin("1234");
+        const cashierPin = await hashPin("0000");
         await db.transaction("rw", [db.users, db.categories, db.products, db.kv], async () => {
           await db.users.bulkAdd([
-            { name: "ເຈົ້າຂອງຮ້ານ", role: "owner", pinHash: await hashPin("1234"), active: true },
-            { name: "ພະນັກງານ", role: "cashier", pinHash: await hashPin("0000"), active: true },
+            { name: "ເຈົ້າຂອງຮ້ານ", role: "owner", pinHash: ownerPin, active: true },
+            { name: "ພະນັກງານ", role: "cashier", pinHash: cashierPin, active: true },
           ]);
           await seedMenu();
           await db.kv.put({ key: "settings", value: DEFAULT_SETTINGS });
@@ -55,7 +59,10 @@ export function ensureReady(): Promise<void> {
       }
       // Ask the browser not to clear our data when storage runs low
       navigator.storage?.persist?.().catch(() => {});
-    })();
+    })().catch((e) => {
+      ready = null; // allow a retry
+      throw e;
+    });
   }
   return ready;
 }

@@ -25,7 +25,7 @@ export function LoginScreen() {
         setUsers(list);
         if (list.length === 1) setUser(list[0]);
       })
-      .catch(() => setError("ເປີດຖານຂໍ້ມູນໃນເຄື່ອງບໍ່ໄດ້ — ກວດວ່າບໍ່ໄດ້ເປີດແບບ Private Browsing"));
+            .catch((e) => setError(`ເປີດຖານຂໍ້ມູນໃນເຄື່ອງບໍ່ໄດ້ (${(e as Error)?.name ?? ""}: ${(e as Error)?.message ?? e})`));
     setNow(new Date());
     const t = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(t);
