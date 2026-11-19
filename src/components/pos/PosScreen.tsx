@@ -8,17 +8,20 @@ import { SaleDone } from "./SaleDone";
 import { DiscountSheet, QtySheet } from "./AmountSheet";
 import { CloseShiftSheet } from "./ShiftGate";
 import { VariantSheet } from "./VariantSheet";
+import { VariantTag } from "@/components/VariantTag";
 import { Sheet } from "@/components/ui/Sheet";
 import { BackupReminder } from "@/components/BackupReminder";
 import { fmt } from "@/lib/money";
 import { computeTotals } from "@/lib/pricing";
 import { createOrder } from "@/lib/store";
 import { clearSession, setLocked, type Session } from "@/lib/session";
-import type { PaymentMethod, PosCategory, PosProduct, ReceiptData, ShopSettings } from "@/lib/types";
+import { VARIANT_NAMES, choicesOf, lineName, typeFromName, type PaymentMethod, type PosCategory, type PosProduct, type ReceiptData, type ShopSettings } from "@/lib/types";
 import type { Shift } from "@/lib/db";
 import { fmtTime } from "@/lib/time";
 
 const keyOf = (id: number, variant: string | null) => `${id}:${variant ?? ""}`;
+/** The till groups drinks hot → iced → blended, then everything else (null) */
+const SECTIONS: (string | null)[] = [...VARIANT_NAMES, null];
 
 type Props = {
   catalog: { categories: PosCategory[]; products: PosProduct[] };
@@ -39,7 +42,7 @@ export function PosScreen({ catalog, settings, user, shift }: Props) {
   const [sheet, setSheet] = useState<"" | "pay" | "discount" | "cart" | "menu" | "close">("");
   const [qtyFor, setQtyFor] = useState<string | null>(null);
   const [pick, setPick] = useState<PosProduct | null>(null);
-  const [bump, setBump] = useState<{ id: number; n: number } | null>(null);
+  const [bump, setBump] = useState<{ key: string; n: number } | null>(null);
   const [done, setDone] = useState<ReceiptData | null>(null);
   const [busy, setBusy] = useState(false);
   const [payError, setPayError] = useState("");
@@ -51,7 +54,7 @@ export function PosScreen({ catalog, settings, user, shift }: Props) {
     if (!product) return [];
     const v = c.variant ? product.variants?.find((x) => x.name === c.variant) : null;
     if (c.variant && !v) return [];
-    return [{ key: keyOf(c.id, c.variant), product, variant: c.variant, price: v ? v.price : product.price, qty: c.qty }];
+    return [{ key: keyOf(c.id, c.variant), product, variant: c.variant, type: c.variant ?? typeFromName(product.name), price: v ? v.price : product.price, qty: c.qty }];
   });
   const totals = computeTotals({
     lines: lines.map((l) => ({ price: l.price, qty: l.qty })),
@@ -60,8 +63,6 @@ export function PosScreen({ catalog, settings, user, shift }: Props) {
     feeRate: 0,
   });
   const count = lines.reduce((s, l) => s + l.qty, 0);
-  /** All variants together, for the badge on the product tile */
-  const qtyIn = (id: number) => cart.reduce((n, c) => (c.id === id ? n + c.qty : n), 0);
   const qtyOf = (key: string) => lines.find((l) => l.key === key)?.qty ?? 0;
 
   const add = useCallback((id: number, variant: string | null = null, n = 1) => {
@@ -71,10 +72,8 @@ export function PosScreen({ catalog, settings, user, shift }: Props) {
         ? c.map((x) => (keyOf(x.id, x.variant) === key ? { ...x, qty: Math.min(9999, x.qty + n) } : x))
         : [...c, { id, variant, qty: n }],
     );
-    setBump((b) => ({ id, n: (b?.n ?? 0) + 1 }));
+    setBump((b) => ({ key, n: (b?.n ?? 0) + 1 }));
   }, []);
-  /** Products that come hot / iced / blended ask which one first */
-  const tap = (p: PosProduct) => (p.variants ? setPick(p) : add(p.id));
   const setQty = (key: string, qty: number) =>
     setCart((c) => (qty <= 0 ? c.filter((x) => keyOf(x.id, x.variant) !== key) : c.map((x) => (keyOf(x.id, x.variant) === key ? { ...x, qty } : x))));
   const inc = (key: string) => setQty(key, Math.min(9999, qtyOf(key) + 1));
@@ -91,6 +90,10 @@ export function PosScreen({ catalog, settings, user, shift }: Props) {
       (cat === "all" || p.categoryId === cat) &&
       (!query || p.name.toLowerCase().includes(query) || p.sku?.toLowerCase() === query),
   );
+  // A product that comes hot / iced / blended has a tile in each section, so one tap adds the right one
+  const tiles = visible.flatMap((p) => choicesOf(p).map((c) => ({ ...c, p, key: keyOf(p.id, c.variant) })));
+  const sections = SECTIONS.map((type) => ({ type, tiles: tiles.filter((t) => t.type === type) })).filter((s) => s.tiles.length);
+  const headed = sections.some((s) => s.type);
   const counts = useMemo(() => {
     const m = new Map<number, number>();
     for (const p of products) if (p.categoryId) m.set(p.categoryId, (m.get(p.categoryId) ?? 0) + 1);
@@ -100,10 +103,12 @@ export function PosScreen({ catalog, settings, user, shift }: Props) {
   /** Barcode scanners type the code and press Enter */
   function onSearchEnter() {
     const exact = products.find((p) => p.sku && p.sku.toLowerCase() === query);
-    const only = visible.length === 1 ? visible[0] : null;
-    const hit = exact ?? only;
-    if (hit) {
-      tap(hit);
+    if (exact) {
+      if (exact.variants) setPick(exact);
+      else add(exact.id);
+      setQ("");
+    } else if (tiles.length === 1) {
+      add(tiles[0].p.id, tiles[0].variant);
       setQ("");
     }
   }
@@ -219,7 +224,7 @@ export function PosScreen({ catalog, settings, user, shift }: Props) {
 
         {/* Products */}
         <main className="scroll-touch @container min-h-0 flex-1 overflow-y-auto p-3 max-lg:pb-28 lg:p-4">
-          {visible.length === 0 ? (
+          {tiles.length === 0 ? (
             <div className="grid h-full place-items-center text-center text-muted">
               <div>
                 <p className="text-lg">ບໍ່ພົບສິນຄ້າ “{q}”</p>
@@ -229,48 +234,55 @@ export function PosScreen({ catalog, settings, user, shift }: Props) {
               </div>
             </div>
           ) : (
-            <ul className="grid grid-cols-2 gap-3 @[440px]:grid-cols-3 @[600px]:grid-cols-4 @[800px]:grid-cols-5 @[1000px]:grid-cols-6">
-              {visible.map((p) => {
-                const inCart = qtyIn(p.id);
-                return (
-                  <li key={p.id}>
-                    <button
-                      onClick={() => tap(p)}
-                      key={bump?.id === p.id ? bump.n : 0}
-                      className={`group relative flex w-full flex-col overflow-hidden rounded-2xl bg-white text-left ring-1 transition active:scale-[0.97] ${
-                        inCart ? "ring-2 ring-ink" : "ring-line"
-                      } ${bump?.id === p.id ? "animate-pop" : ""}`}
-                    >
-                      <div className="grid aspect-[4/3] w-full place-items-center overflow-hidden" style={{ background: p.color ?? "var(--color-ink-faint)" }}>
-                        {p.imageUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={p.imageUrl} alt="" loading="lazy" className="size-full object-cover" draggable={false} />
-                        ) : (
-                          <span className="text-5xl drop-shadow-sm" aria-hidden>{p.emoji ?? "🛍️"}</span>
-                        )}
-                      </div>
-                      {p.variants && (
-                        <span className="absolute left-2 top-2 rounded-full bg-white/90 px-2 py-0.5 text-xs font-semibold shadow-sm">
-                          {p.variants.map((v) => v.name).join(" · ")}
-                        </span>
-                      )}
-                      <div className="flex flex-1 flex-col px-3 pb-3 pt-2">
-                        <span className="line-clamp-2 min-h-[2.6em] text-[15px] font-medium leading-snug">{p.name}</span>
-                        <span className="num mt-1 text-[17px] font-semibold">
-                          {p.variants && <span className="text-sm font-normal text-muted">ເລີ່ມ </span>}
-                          {fmt(p.price)} ₭
-                        </span>
-                      </div>
-                      {inCart > 0 && (
-                        <span className="num absolute right-2 top-2 grid h-8 min-w-8 place-items-center rounded-full bg-ink px-2 text-base font-bold text-white shadow-md">
-                          {inCart}
-                        </span>
-                      )}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+            <div className="grid gap-4">
+              {sections.map((sec) => (
+                <section key={sec.type ?? "other"} aria-label={sec.type ?? "ອື່ນໆ"}>
+                  {headed && (
+                    <h2 className="sticky -top-3 z-10 -mx-3 mb-2 flex items-center gap-3 bg-paper/95 px-3 py-2 backdrop-blur lg:-top-4 lg:-mx-4 lg:px-4">
+                      {sec.type ? <VariantTag name={sec.type} solid className="px-3.5 py-1 text-base" /> : <span className="px-1 text-base font-semibold text-muted">ອື່ນໆ</span>}
+                      <span className="num text-sm text-muted">{sec.tiles.length}</span>
+                      <span className="h-px flex-1 bg-line" />
+                    </h2>
+                  )}
+                  <ul className="grid grid-cols-2 gap-3 @[440px]:grid-cols-3 @[600px]:grid-cols-4 @[800px]:grid-cols-5 @[1000px]:grid-cols-6">
+                    {sec.tiles.map((t) => {
+                      const p = t.p;
+                      const inCart = qtyOf(t.key);
+                      return (
+                        <li key={t.key}>
+                          <button
+                            onClick={() => add(p.id, t.variant)}
+                            key={bump?.key === t.key ? bump.n : 0}
+                            className={`group relative flex w-full flex-col overflow-hidden rounded-2xl bg-white text-left ring-1 transition active:scale-[0.97] ${
+                              inCart ? "ring-2 ring-ink" : "ring-line"
+                            } ${bump?.key === t.key ? "animate-pop" : ""}`}
+                          >
+                            <div className="grid aspect-[4/3] w-full place-items-center overflow-hidden" style={{ background: p.color ?? "var(--color-ink-faint)" }}>
+                              {p.imageUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={p.imageUrl} alt="" loading="lazy" className="size-full object-cover" draggable={false} />
+                              ) : (
+                                <span className="text-5xl drop-shadow-sm" aria-hidden>{p.emoji ?? "🛍️"}</span>
+                              )}
+                            </div>
+                            {t.type && <VariantTag name={t.type} solid className="absolute left-2 top-2 px-2.5 py-1 text-sm shadow-sm" />}
+                            <div className="flex flex-1 flex-col px-3 pb-3 pt-2">
+                              <span className="line-clamp-2 min-h-[2.6em] text-[15px] font-medium leading-snug">{p.name}</span>
+                              <span className="num mt-1 text-[17px] font-semibold">{fmt(t.price)} ₭</span>
+                            </div>
+                            {inCart > 0 && (
+                              <span className="num absolute right-2 top-2 grid h-8 min-w-8 place-items-center rounded-full bg-ink px-2 text-base font-bold text-white shadow-md">
+                                {inCart}
+                              </span>
+                            )}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              ))}
+            </div>
           )}
         </main>
 
@@ -330,7 +342,7 @@ export function PosScreen({ catalog, settings, user, shift }: Props) {
       <DiscountSheet open={sheet === "discount"} subtotal={totals.subtotal} current={discount} onClose={() => setSheet("")} onSave={setDiscount} />
       <QtySheet
         open={!!qtyLine}
-        name={qtyLine ? `${qtyLine.product.name}${qtyLine.variant ? ` (${qtyLine.variant})` : ""}` : ""}
+        name={qtyLine ? lineName(qtyLine.product.name, qtyLine.variant) : ""}
         qty={qtyLine?.qty ?? 0}
         onClose={() => setQtyFor(null)}
         onSave={(n) => qtyFor && setQty(qtyFor, n)}

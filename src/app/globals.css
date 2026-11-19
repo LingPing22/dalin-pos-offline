@@ -6,6 +6,7 @@
   marigold  — the flower of baci strings: the one "money moves" action per screen
   leaf      — money coming in / profit
   chili     — removal, voids, expenses
+  hot / ice / blend — the three drink types (ຮ້ອນ / ເຢັນ / ປັ່ນ), never used for anything else
 */
 @theme {
   --font-sans: "Noto Sans Lao Variable", "Phetsarath OT", ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -25,6 +26,12 @@
   --color-chili-faint: #fbe9e5;
   --color-qr: #4c63c9;
   --color-card: #c0761c;
+  --color-hot: #c84b11;
+  --color-hot-faint: #fdeadf;
+  --color-ice: #1b6aae;
+  --color-ice-faint: #e2effa;
+  --color-blend: #7e3aa3;
+  --color-blend-faint: #f2e6f8;
 
   --animate-print: print-out 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
   --animate-sheet: sheet-up 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;

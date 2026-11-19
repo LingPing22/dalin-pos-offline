@@ -37,6 +37,24 @@ export type Variant = { name: string; price: number; cost: number };
 export const VARIANT_NAMES = ["ຮ້ອນ", "ເຢັນ", "ປັ່ນ"] as const;
 export const VARIANT_ICON: Record<string, string> = { ຮ້ອນ: "☕", ເຢັນ: "🧊", ປັ່ນ: "🥤" };
 
+/** "ກາເຟນົມເຢັນ" → "ເຢັນ": a plain product whose name says exactly one of hot / iced / blended */
+export function typeFromName(name: string): string | null {
+  const hit = VARIANT_NAMES.filter((n) => name.includes(n));
+  return hit.length === 1 ? hit[0] : null;
+}
+
+/** One tile on the till: a product as one of hot / iced / blended (type null = not a drink type) */
+export type Choice = { type: string | null; variant: string | null; price: number };
+
+/** A product with variants gets a tile per variant; a plain one is grouped by what its name says */
+export function choicesOf(p: { name: string; price: number; variants?: Variant[] | null }): Choice[] {
+  if (p.variants?.length) return p.variants.map((v) => ({ type: v.name, variant: v.name, price: v.price }));
+  return [{ type: typeFromName(p.name), variant: null, price: p.price }];
+}
+
+/** Bill / receipt line: "ກາເຟລາວ (ເຢັນ)", but not "ກາເຟນົມເຢັນ (ເຢັນ)" */
+export const lineName = (name: string, variant: string | null | undefined) => (variant && !name.includes(variant) ? `${name} (${variant})` : name);
+
 export type PosProduct = {
   id: number;
   categoryId: number | null;

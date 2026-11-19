@@ -6,7 +6,8 @@ import { Field, PageHeader, btnDanger, btnGhost, btnPrimary, inputCls, resizeIma
 import { Sheet } from "@/components/ui/Sheet";
 import { fmt } from "@/lib/money";
 import { addCategory, deleteCategory, deleteProduct, getCategories, listProducts, saveProduct, updateCategory, type AdminProduct } from "@/lib/store";
-import { VARIANT_ICON, VARIANT_NAMES, type PosCategory } from "@/lib/types";
+import { VARIANT_NAMES, choicesOf, typeFromName, type PosCategory } from "@/lib/types";
+import { VariantTag, variantStyle } from "@/components/VariantTag";
 
 const SWATCHES = ["#F3E6D8", "#FBE1C8", "#FCE6B8", "#F8F0C6", "#DDEBD3", "#E1EEF8", "#EDE7F6", "#F9D7DC", "#EEF1F6"];
 
@@ -75,11 +76,19 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
   function setMulti(on: boolean) {
     if (!draft) return;
     const base = Number(draft.price) || 0;
+    // "ກາເຟນົມເຢັນ" is already the iced one: tick only that, and price the others around it
+    const named = typeFromName(draft.name);
+    const fresh = VARIANT_NAMES.every((n) => !draft.variants[n].price);
     const variants = { ...draft.variants };
     if (on)
       for (const n of VARIANT_NAMES) {
         const v = variants[n];
-        variants[n] = { ...v, price: v.price || (base ? String(base + SUGGEST_EXTRA[n]) : ""), cost: v.cost || draft.cost };
+        const suggest = base ? base + SUGGEST_EXTRA[n] - SUGGEST_EXTRA[named ?? "ຮ້ອນ"] : 0;
+        variants[n] = {
+          on: fresh && named ? n === named : v.on,
+          price: v.price || (suggest > 0 ? String(suggest) : ""),
+          cost: v.cost || draft.cost,
+        };
       }
     setDraft({ ...draft, multi: on, variants });
   }
@@ -169,8 +178,10 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
                       </span>
                       <span>
                         <span className="block font-medium">{p.name}</span>
-                        {p.variants?.length ? (
-                          <span className="block text-sm text-muted">{p.variants.map((v) => v.name).join(" · ")}</span>
+                        {choicesOf(p).some((c) => c.type) ? (
+                          <span className="mt-0.5 flex flex-wrap gap-1">
+                            {choicesOf(p).map((c) => c.type && <VariantTag key={c.type} name={c.type} />)}
+                          </span>
                         ) : (
                           p.sku && <span className="num block text-sm text-muted">{p.sku}</span>
                         )}
@@ -264,8 +275,12 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
               </Field>
               <label className="flex min-h-12 items-center justify-between gap-3 rounded-xl bg-white px-4 py-2 ring-1 ring-line">
                 <span>
-                  <span className="block">ມີຫຼາຍແບບ (ຮ້ອນ / ເຢັນ / ປັ່ນ)</span>
-                  <span className="block text-sm text-muted">ແຕະສິນຄ້າໃນໜ້າຂາຍ ແລ້ວເລືອກແບບ — ແຕ່ລະແບບມີລາຄາຂອງຕົນເອງ</span>
+                  <span className="block">ແຍກແບບ ຮ້ອນ / ເຢັນ / ປັ່ນ</span>
+                  <span className="block text-sm text-muted">
+                    {!draft.multi && typeFromName(draft.name)
+                      ? `ຕອນນີ້ຢູ່ໃນກຸ່ມ “${typeFromName(draft.name)}” ຕາມຊື່ສິນຄ້າ — ເປີດ ຖ້າຂາຍຫຼາຍແບບ`
+                      : "ໜ້າຂາຍຈະແຍກເປັນກຸ່ມ ຮ້ອນ / ເຢັນ / ປັ່ນ — ແຕ່ລະແບບມີລາຄາຂອງຕົນເອງ"}
+                  </span>
                 </span>
                 <input type="checkbox" checked={draft.multi} onChange={(e) => setMulti(e.target.checked)} className="size-6 shrink-0 accent-[var(--color-ink)]" />
               </label>
@@ -280,10 +295,9 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
                     const v = draft.variants[n];
                     return (
                       <div key={n} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1.1fr)] items-center gap-2">
-                        <label className={`flex h-12 items-center gap-2 rounded-xl px-3 ring-1 ${v.on ? "bg-white ring-ink" : "bg-paper text-muted ring-line"}`}>
+                        <label className={`flex h-12 items-center gap-2 rounded-xl px-3 ${v.on ? `ring-2 ${variantStyle(n).soft} ${variantStyle(n).ring}` : "bg-paper text-muted ring-1 ring-line"}`}>
                           <input type="checkbox" checked={v.on} onChange={(e) => setVariant(n, { on: e.target.checked })} className="size-5 shrink-0 accent-[var(--color-ink)]" />
-                          <span aria-hidden>{VARIANT_ICON[n]}</span>
-                          <span className="font-medium">{n}</span>
+                          <VariantTag name={n} solid={v.on} className="text-sm" />
                         </label>
                         <input inputMode="numeric" disabled={!v.on} value={v.price} onChange={(e) => setVariant(n, { price: e.target.value.replace(/\D/g, "") })} className={tw(inputCls, "num")} aria-label={`ລາຄາ ${n}`} />
                         <input inputMode="numeric" disabled={!v.on} value={v.cost} onChange={(e) => setVariant(n, { cost: e.target.value.replace(/\D/g, "") })} className={tw(inputCls, "num")} aria-label={`ຕົ້ນທຶນ ${n}`} />

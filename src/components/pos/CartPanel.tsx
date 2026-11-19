@@ -4,9 +4,10 @@ import { Minus, Plus, Trash2, Tag } from "lucide-react";
 import { fmt } from "@/lib/money";
 import type { PricingResult } from "@/lib/pricing";
 import type { PosProduct, ShopSettings } from "@/lib/types";
+import { VariantTag } from "@/components/VariantTag";
 
-/** key = product id + variant, so hot and iced coffee are separate lines */
-export type Line = { key: string; product: PosProduct; variant: string | null; price: number; qty: number };
+/** key = product id + variant, so hot and iced coffee are separate lines; type = hot / iced / blended for the colour tag */
+export type Line = { key: string; product: PosProduct; variant: string | null; type: string | null; price: number; qty: number };
 
 type Props = {
   lines: Line[];
@@ -56,12 +57,12 @@ export function CartPanel({ lines, totals, settings, onInc, onDec, onQty, onClea
           </div>
         ) : (
           <ul className="divide-y divide-line">
-            {lines.map(({ key, product: p, variant, price, qty }) => (
+            {lines.map(({ key, product: p, type, price, qty }) => (
               <li key={key} className="flex items-center gap-3 px-5 py-3">
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">
-                    {p.name}
-                    {variant && <span className="ml-1.5 rounded-md bg-ink-faint px-1.5 py-0.5 text-sm font-semibold">{variant}</span>}
+                  <p className="flex items-center gap-1.5 font-medium">
+                    <span className="truncate">{p.name}</span>
+                    {type && <VariantTag name={type} className="shrink-0 text-sm" />}
                   </p>
                   <p className="num text-sm text-muted">
                     {fmt(price)} <span className="text-ink">= {fmt(price * qty)}</span>

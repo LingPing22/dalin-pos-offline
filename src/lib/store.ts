@@ -6,7 +6,7 @@
 import { getDb, type Category, type Expense, type Order, type Product, type Shift, type ShiftSummary, type User } from "./db";
 import { computeTotals } from "./pricing";
 import { DAY, HOUR, addMonths, fromDateKey, startOfDay, startOfMonth, toDateKey } from "./time";
-import { DEFAULT_SETTINGS, LOCK_MINUTES, VARIANT_NAMES, type Variant, type PaymentMethod, type PosCategory, type PosProduct, type ReceiptData, type Role, type ShopSettings } from "./types";
+import { DEFAULT_SETTINGS, LOCK_MINUTES, VARIANT_NAMES, lineName, type Variant, type PaymentMethod, type PosCategory, type PosProduct, type ReceiptData, type Role, type ShopSettings } from "./types";
 import { STARTER_CATEGORIES, STARTER_MENU, generateDemo } from "./demo";
 import { DEFAULT_PINS, isWeakPin } from "./pin";
 import type { Session } from "./session";
@@ -427,7 +427,7 @@ export async function createOrder(input: OrderInput, session: Session): Promise<
       items: lines.map((l) => ({
         productId: l.p.id!,
         variant: l.variant,
-        name: l.variant ? `${l.p.name} (${l.variant})` : l.p.name,
+        name: lineName(l.p.name, l.variant),
         price: l.price,
         cost: l.cost,
         qty: l.qty,
