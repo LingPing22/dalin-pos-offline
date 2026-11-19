@@ -7,6 +7,7 @@ import { PaymentSheet } from "./PaymentSheet";
 import { SaleDone } from "./SaleDone";
 import { DiscountSheet, QtySheet } from "./AmountSheet";
 import { CloseShiftSheet } from "./ShiftGate";
+import { VariantSheet } from "./VariantSheet";
 import { Sheet } from "@/components/ui/Sheet";
 import { BackupReminder } from "@/components/BackupReminder";
 import { fmt } from "@/lib/money";
@@ -16,6 +17,8 @@ import { clearSession, setLocked, type Session } from "@/lib/session";
 import type { PaymentMethod, PosCategory, PosProduct, ReceiptData, ShopSettings } from "@/lib/types";
 import type { Shift } from "@/lib/db";
 import { fmtTime } from "@/lib/time";
+
+const keyOf = (id: number, variant: string | null) => `${id}:${variant ?? ""}`;
 
 type Props = {
   catalog: { categories: PosCategory[]; products: PosProduct[] };
@@ -31,10 +34,11 @@ export function PosScreen({ catalog, settings, user, shift }: Props) {
 
   const [cat, setCat] = useState<number | "all">("all");
   const [q, setQ] = useState("");
-  const [cart, setCart] = useState<{ id: number; qty: number }[]>([]);
+  const [cart, setCart] = useState<{ id: number; variant: string | null; qty: number }[]>([]);
   const [discount, setDiscount] = useState(0);
   const [sheet, setSheet] = useState<"" | "pay" | "discount" | "cart" | "menu" | "close">("");
-  const [qtyFor, setQtyFor] = useState<number | null>(null);
+  const [qtyFor, setQtyFor] = useState<string | null>(null);
+  const [pick, setPick] = useState<PosProduct | null>(null);
   const [bump, setBump] = useState<{ id: number; n: number } | null>(null);
   const [done, setDone] = useState<ReceiptData | null>(null);
   const [busy, setBusy] = useState(false);
@@ -44,24 +48,37 @@ export function PosScreen({ catalog, settings, user, shift }: Props) {
   // ---------- cart ----------
   const lines: Line[] = cart.flatMap((c) => {
     const product = byId.get(c.id);
-    return product ? [{ product, qty: c.qty }] : [];
+    if (!product) return [];
+    const v = c.variant ? product.variants?.find((x) => x.name === c.variant) : null;
+    if (c.variant && !v) return [];
+    return [{ key: keyOf(c.id, c.variant), product, variant: c.variant, price: v ? v.price : product.price, qty: c.qty }];
   });
   const totals = computeTotals({
-    lines: lines.map((l) => ({ price: l.product.price, qty: l.qty })),
+    lines: lines.map((l) => ({ price: l.price, qty: l.qty })),
     discount,
     tax: settings.tax,
     feeRate: 0,
   });
   const count = lines.reduce((s, l) => s + l.qty, 0);
-  const qtyIn = (id: number) => cart.find((c) => c.id === id)?.qty ?? 0;
+  /** All variants together, for the badge on the product tile */
+  const qtyIn = (id: number) => cart.reduce((n, c) => (c.id === id ? n + c.qty : n), 0);
+  const qtyOf = (key: string) => lines.find((l) => l.key === key)?.qty ?? 0;
 
-  const add = useCallback((id: number, n = 1) => {
-    setCart((c) => (c.some((x) => x.id === id) ? c.map((x) => (x.id === id ? { ...x, qty: Math.min(9999, x.qty + n) } : x)) : [...c, { id, qty: n }]));
+  const add = useCallback((id: number, variant: string | null = null, n = 1) => {
+    const key = keyOf(id, variant);
+    setCart((c) =>
+      c.some((x) => keyOf(x.id, x.variant) === key)
+        ? c.map((x) => (keyOf(x.id, x.variant) === key ? { ...x, qty: Math.min(9999, x.qty + n) } : x))
+        : [...c, { id, variant, qty: n }],
+    );
     setBump((b) => ({ id, n: (b?.n ?? 0) + 1 }));
   }, []);
-  const setQty = (id: number, qty: number) =>
-    setCart((c) => (qty <= 0 ? c.filter((x) => x.id !== id) : c.map((x) => (x.id === id ? { ...x, qty } : x))));
-  const dec = (id: number) => setQty(id, qtyIn(id) - 1);
+  /** Products that come hot / iced / blended ask which one first */
+  const tap = (p: PosProduct) => (p.variants ? setPick(p) : add(p.id));
+  const setQty = (key: string, qty: number) =>
+    setCart((c) => (qty <= 0 ? c.filter((x) => keyOf(x.id, x.variant) !== key) : c.map((x) => (keyOf(x.id, x.variant) === key ? { ...x, qty } : x))));
+  const inc = (key: string) => setQty(key, Math.min(9999, qtyOf(key) + 1));
+  const dec = (key: string) => setQty(key, qtyOf(key) - 1);
   const clear = () => {
     setCart([]);
     setDiscount(0);
@@ -86,7 +103,7 @@ export function PosScreen({ catalog, settings, user, shift }: Props) {
     const only = visible.length === 1 ? visible[0] : null;
     const hit = exact ?? only;
     if (hit) {
-      add(hit.id);
+      tap(hit);
       setQ("");
     }
   }
@@ -97,7 +114,7 @@ export function PosScreen({ catalog, settings, user, shift }: Props) {
     setPayError("");
     try {
       const r = await createOrder(
-        { items: cart.map((c) => ({ productId: c.id, qty: c.qty })), discount: totals.discount, paymentMethod: method, received, paymentRef: ref || undefined },
+        { items: cart.map((c) => ({ productId: c.id, variant: c.variant, qty: c.qty })), discount: totals.discount, paymentMethod: method, received, paymentRef: ref || undefined },
         user,
       );
       finish(r);
@@ -118,13 +135,13 @@ export function PosScreen({ catalog, settings, user, shift }: Props) {
     router.replace("/login/");
   }
 
-  const qtyProduct = qtyFor ? byId.get(qtyFor) : null;
+  const qtyLine = qtyFor ? lines.find((l) => l.key === qtyFor) : null;
   const cartPanel = (
     <CartPanel
       lines={lines}
       totals={totals}
       settings={settings}
-      onInc={(id) => add(id)}
+      onInc={inc}
       onDec={dec}
       onQty={setQtyFor}
       onClear={clear}
@@ -218,7 +235,7 @@ export function PosScreen({ catalog, settings, user, shift }: Props) {
                 return (
                   <li key={p.id}>
                     <button
-                      onClick={() => add(p.id)}
+                      onClick={() => tap(p)}
                       key={bump?.id === p.id ? bump.n : 0}
                       className={`group relative flex w-full flex-col overflow-hidden rounded-2xl bg-white text-left ring-1 transition active:scale-[0.97] ${
                         inCart ? "ring-2 ring-ink" : "ring-line"
@@ -232,9 +249,17 @@ export function PosScreen({ catalog, settings, user, shift }: Props) {
                           <span className="text-5xl drop-shadow-sm" aria-hidden>{p.emoji ?? "🛍️"}</span>
                         )}
                       </div>
+                      {p.variants && (
+                        <span className="absolute left-2 top-2 rounded-full bg-white/90 px-2 py-0.5 text-xs font-semibold shadow-sm">
+                          {p.variants.map((v) => v.name).join(" · ")}
+                        </span>
+                      )}
                       <div className="flex flex-1 flex-col px-3 pb-3 pt-2">
                         <span className="line-clamp-2 min-h-[2.6em] text-[15px] font-medium leading-snug">{p.name}</span>
-                        <span className="num mt-1 text-[17px] font-semibold">{fmt(p.price)} ₭</span>
+                        <span className="num mt-1 text-[17px] font-semibold">
+                          {p.variants && <span className="text-sm font-normal text-muted">ເລີ່ມ </span>}
+                          {fmt(p.price)} ₭
+                        </span>
                       </div>
                       {inCart > 0 && (
                         <span className="num absolute right-2 top-2 grid h-8 min-w-8 place-items-center rounded-full bg-ink px-2 text-base font-bold text-white shadow-md">
@@ -303,7 +328,14 @@ export function PosScreen({ catalog, settings, user, shift }: Props) {
       <CloseShiftSheet open={sheet === "close"} shift={shift} by={user} shopName={settings.shop.name} onClose={() => setSheet("")} onDone={logout} />
       <PaymentSheet open={sheet === "pay"} total={totals.total} settings={settings} busy={busy} error={payError} onClose={() => setSheet("")} onConfirm={pay} />
       <DiscountSheet open={sheet === "discount"} subtotal={totals.subtotal} current={discount} onClose={() => setSheet("")} onSave={setDiscount} />
-      <QtySheet open={!!qtyProduct} name={qtyProduct?.name ?? ""} qty={qtyFor ? qtyIn(qtyFor) : 0} onClose={() => setQtyFor(null)} onSave={(n) => qtyFor && setQty(qtyFor, n)} />
+      <QtySheet
+        open={!!qtyLine}
+        name={qtyLine ? `${qtyLine.product.name}${qtyLine.variant ? ` (${qtyLine.variant})` : ""}` : ""}
+        qty={qtyLine?.qty ?? 0}
+        onClose={() => setQtyFor(null)}
+        onSave={(n) => qtyFor && setQty(qtyFor, n)}
+      />
+      <VariantSheet product={pick} onClose={() => setPick(null)} onPick={(v) => pick && add(pick.id, v)} />
       {done && <SaleDone r={done} settings={settings} onNext={() => setDone(null)} />}
     </div>
   );

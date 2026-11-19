@@ -32,6 +32,11 @@ export const DEFAULT_SETTINGS: ShopSettings = {
   security: { lockMinutes: 10 },
 };
 
+/** Hot / iced / blended versions of one product, each with its own price */
+export type Variant = { name: string; price: number; cost: number };
+export const VARIANT_NAMES = ["ຮ້ອນ", "ເຢັນ", "ປັ່ນ"] as const;
+export const VARIANT_ICON: Record<string, string> = { ຮ້ອນ: "☕", ເຢັນ: "🧊", ປັ່ນ: "🥤" };
+
 export type PosProduct = {
   id: number;
   categoryId: number | null;
@@ -41,6 +46,8 @@ export type PosProduct = {
   emoji: string | null;
   color: string | null;
   imageUrl: string | null;
+  /** null = one price; otherwise the cashier picks one of these */
+  variants: Variant[] | null;
 };
 
 export type PosCategory = { id: number; name: string; icon: string };

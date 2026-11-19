@@ -6,7 +6,7 @@
 import { getDb, type Category, type Expense, type Order, type Product, type Shift, type ShiftSummary, type User } from "./db";
 import { computeTotals } from "./pricing";
 import { DAY, HOUR, addMonths, fromDateKey, startOfDay, startOfMonth, toDateKey } from "./time";
-import { DEFAULT_SETTINGS, LOCK_MINUTES, type PaymentMethod, type PosCategory, type PosProduct, type ReceiptData, type Role, type ShopSettings } from "./types";
+import { DEFAULT_SETTINGS, LOCK_MINUTES, VARIANT_NAMES, type Variant, type PaymentMethod, type PosCategory, type PosProduct, type ReceiptData, type Role, type ShopSettings } from "./types";
 import { STARTER_CATEGORIES, STARTER_MENU, generateDemo } from "./demo";
 import { DEFAULT_PINS, isWeakPin } from "./pin";
 import type { Session } from "./session";
@@ -224,7 +224,17 @@ export async function getCatalog(): Promise<{ categories: PosCategory[]; product
     products: rows
       .filter((p) => p.active)
       .sort(bySort)
-      .map((p) => ({ id: p.id!, categoryId: p.categoryId, name: p.name, sku: p.sku, price: p.price, emoji: p.emoji, color: p.color, imageUrl: p.image })),
+      .map((p) => ({
+        id: p.id!,
+        categoryId: p.categoryId,
+        name: p.name,
+        sku: p.sku,
+        price: p.price,
+        emoji: p.emoji,
+        color: p.color,
+        imageUrl: p.image,
+        variants: p.variants?.length ? p.variants : null,
+      })),
   };
 }
 
@@ -246,18 +256,28 @@ export type ProductInput = {
   color: string;
   active: boolean;
   image?: string | null; // undefined = unchanged
+  /** Empty / null = single price */
+  variants?: { name: string; price: number | string; cost: number | string }[] | null;
 };
 
 export async function saveProduct(d: ProductInput) {
   const db = getDb();
   const name = d.name.trim().slice(0, 80);
-  const price = Math.round(Number(d.price));
   if (!name) fail("ກະລຸນາໃສ່ຊື່ສິນຄ້າ");
+  const variants: Variant[] = VARIANT_NAMES.flatMap((n) => {
+    const v = d.variants?.find((x) => x.name === n);
+    return v ? [{ name: n, price: Math.round(Number(v.price)), cost: Math.max(0, Math.round(Number(v.cost) || 0)) }] : [];
+  });
+  if (variants.some((v) => !(v.price > 0))) fail("ກະລຸນາໃສ່ລາຄາໃຫ້ທຸກແບບ");
+  // Lists and margins use the cheapest version
+  const cheapest = variants.reduce<Variant | null>((m, v) => (!m || v.price < m.price ? v : m), null);
+  const price = cheapest ? cheapest.price : Math.round(Number(d.price));
   if (!(price >= 0)) fail("ລາຄາບໍ່ຖືກຕ້ອງ");
   const data: Partial<Product> = {
     name,
     price,
-    cost: Math.max(0, Math.round(Number(d.cost) || 0)),
+    cost: cheapest ? cheapest.cost : Math.max(0, Math.round(Number(d.cost) || 0)),
+    variants: variants.length ? variants : null,
     categoryId: d.categoryId,
     sku: d.sku.trim().slice(0, 40) || null,
     emoji: d.emoji.trim().slice(0, 8) || null,
@@ -307,7 +327,7 @@ export async function deleteCategory(id: number) {
 
 // ---------------------------------------------------------------- orders
 export type OrderInput = {
-  items: { productId: number; qty: number }[];
+  items: { productId: number; variant?: string | null; qty: number }[];
   discount: number;
   paymentMethod: PaymentMethod;
   received: number;
@@ -337,19 +357,32 @@ export function toReceipt(o: Order): ReceiptData {
 
 export async function createOrder(input: OrderInput, session: Session): Promise<ReceiptData> {
   const db = getDb();
-  const qtyById = new Map<number, number>();
+  // One line per product + variant (hot and iced coffee are separate lines)
+  const wanted = new Map<string, { productId: number; variant: string | null; qty: number }>();
   for (const it of input.items) {
     const q = Math.floor(it.qty);
-    if (it.productId && q > 0) qtyById.set(it.productId, Math.min(9999, (qtyById.get(it.productId) ?? 0) + q));
+    if (!it.productId || q <= 0) continue;
+    const variant = it.variant || null;
+    const key = `${it.productId}:${variant ?? ""}`;
+    const row = wanted.get(key) ?? { productId: it.productId, variant, qty: 0 };
+    row.qty = Math.min(9999, row.qty + q);
+    wanted.set(key, row);
   }
-  if (!qtyById.size) fail("ບໍ່ມີສິນຄ້າໃນບິນ");
+  if (!wanted.size) fail("ບໍ່ມີສິນຄ້າໃນບິນ");
   const shift = await getOpenShift();
   if (!shift) fail("ກະລຸນາເປີດກະກ່ອນຂາຍ");
-  const products = await db.products.bulkGet([...qtyById.keys()]);
+  const rows = [...wanted.values()];
+  const products = await db.products.bulkGet(rows.map((r) => r.productId));
   if (products.some((p) => !p)) fail("ບາງສິນຄ້າບໍ່ມີໃນລະບົບແລ້ວ");
 
   const s = await getSettings();
-  const lines = products.map((p) => ({ p: p!, qty: qtyById.get(p!.id!)!, price: p!.price, cost: p!.cost }));
+  const lines = rows.map((r, i) => {
+    const p = products[i]!;
+    // Prices always come from the database, never from the cart
+    const v = p.variants?.length ? p.variants.find((x) => x.name === r.variant) : undefined;
+    if (p.variants?.length && !v) fail(`ກະລຸນາເລືອກແບບຂອງ ${p.name} (ຮ້ອນ / ເຢັນ / ປັ່ນ)`);
+    return { p, variant: v?.name ?? null, qty: r.qty, price: v ? v.price : p.price, cost: v ? v.cost : p.cost };
+  });
   const feeRate = s.fees[input.paymentMethod] ?? 0;
   const t = computeTotals({ lines, discount: input.discount, tax: s.tax, feeRate });
 
@@ -391,7 +424,15 @@ export async function createOrder(input: OrderInput, session: Session): Promise<
       voidedAt: null,
       voidReason: null,
       shiftId: shift!.id,
-      items: lines.map((l) => ({ productId: l.p.id!, name: l.p.name, price: l.price, cost: l.cost, qty: l.qty, lineTotal: l.price * l.qty })),
+      items: lines.map((l) => ({
+        productId: l.p.id!,
+        variant: l.variant,
+        name: l.variant ? `${l.p.name} (${l.variant})` : l.p.name,
+        price: l.price,
+        cost: l.cost,
+        qty: l.qty,
+        lineTotal: l.price * l.qty,
+      })),
     };
     await db.orders.add(o);
     return o;

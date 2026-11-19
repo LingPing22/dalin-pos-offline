@@ -5,15 +5,16 @@ import { fmt } from "@/lib/money";
 import type { PricingResult } from "@/lib/pricing";
 import type { PosProduct, ShopSettings } from "@/lib/types";
 
-export type Line = { product: PosProduct; qty: number };
+/** key = product id + variant, so hot and iced coffee are separate lines */
+export type Line = { key: string; product: PosProduct; variant: string | null; price: number; qty: number };
 
 type Props = {
   lines: Line[];
   totals: PricingResult;
   settings: ShopSettings;
-  onInc: (id: number) => void;
-  onDec: (id: number) => void;
-  onQty: (id: number) => void;
+  onInc: (key: string) => void;
+  onDec: (key: string) => void;
+  onQty: (key: string) => void;
   onClear: () => void;
   onDiscount: () => void;
   onPay: () => void;
@@ -55,26 +56,29 @@ export function CartPanel({ lines, totals, settings, onInc, onDec, onQty, onClea
           </div>
         ) : (
           <ul className="divide-y divide-line">
-            {lines.map(({ product: p, qty }) => (
-              <li key={p.id} className="flex items-center gap-3 px-5 py-3">
+            {lines.map(({ key, product: p, variant, price, qty }) => (
+              <li key={key} className="flex items-center gap-3 px-5 py-3">
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{p.name}</p>
+                  <p className="truncate font-medium">
+                    {p.name}
+                    {variant && <span className="ml-1.5 rounded-md bg-ink-faint px-1.5 py-0.5 text-sm font-semibold">{variant}</span>}
+                  </p>
                   <p className="num text-sm text-muted">
-                    {fmt(p.price)} <span className="text-ink">= {fmt(p.price * qty)}</span>
+                    {fmt(price)} <span className="text-ink">= {fmt(price * qty)}</span>
                   </p>
                 </div>
                 <div className="flex items-center rounded-full bg-paper ring-1 ring-line">
                   <button
-                    onClick={() => onDec(p.id)}
+                    onClick={() => onDec(key)}
                     aria-label={qty === 1 ? "ລຶບລາຍການ" : "ຫຼຸດຈຳນວນ"}
                     className={`grid size-11 place-items-center rounded-full ${qty === 1 ? "text-chili" : "text-ink"} active:bg-ink-faint`}
                   >
                     {qty === 1 ? <Trash2 className="size-5" /> : <Minus className="size-5" />}
                   </button>
-                  <button onClick={() => onQty(p.id)} className="num h-11 min-w-10 px-1 text-lg font-semibold" aria-label="ແກ້ຈຳນວນ">
+                  <button onClick={() => onQty(key)} className="num h-11 min-w-10 px-1 text-lg font-semibold" aria-label="ແກ້ຈຳນວນ">
                     {qty}
                   </button>
-                  <button onClick={() => onInc(p.id)} aria-label="ເພີ່ມຈຳນວນ" className="grid size-11 place-items-center rounded-full active:bg-ink-faint">
+                  <button onClick={() => onInc(key)} aria-label="ເພີ່ມຈຳນວນ" className="grid size-11 place-items-center rounded-full active:bg-ink-faint">
                     <Plus className="size-5" />
                   </button>
                 </div>

@@ -1,6 +1,6 @@
 "use client";
 import Dexie, { type Table } from "dexie";
-import type { PaymentMethod, Role } from "./types";
+import type { PaymentMethod, Role, Variant } from "./types";
 
 /** Everything lives in the iPad's own database (IndexedDB). Money = integer kip, time = ms. */
 export type Category = { id?: number; name: string; icon: string; sort: number };
@@ -14,12 +14,15 @@ export type Product = {
   emoji: string | null;
   color: string | null;
   image: string | null; // small JPEG data URL
+  /** Hot / iced / blended prices. When set, price/cost hold the cheapest one (for lists). */
+  variants?: Variant[] | null;
   active: boolean;
   sort: number;
   updatedAt: number;
 };
 export type User = { id?: number; name: string; role: Role; pinHash: string; active: boolean };
-export type OrderItem = { productId: number | null; name: string; price: number; cost: number; qty: number; lineTotal: number };
+/** name already includes the variant, e.g. "ກາເຟລາວ (ເຢັນ)", so receipts need nothing special */
+export type OrderItem = { productId: number | null; variant?: string | null; name: string; price: number; cost: number; qty: number; lineTotal: number };
 export type Order = {
   id: string;
   billNo: string;

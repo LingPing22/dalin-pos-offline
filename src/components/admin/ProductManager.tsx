@@ -6,7 +6,7 @@ import { Field, PageHeader, btnDanger, btnGhost, btnPrimary, inputCls, resizeIma
 import { Sheet } from "@/components/ui/Sheet";
 import { fmt } from "@/lib/money";
 import { addCategory, deleteCategory, deleteProduct, getCategories, listProducts, saveProduct, updateCategory, type AdminProduct } from "@/lib/store";
-import type { PosCategory } from "@/lib/types";
+import { VARIANT_ICON, VARIANT_NAMES, type PosCategory } from "@/lib/types";
 
 const SWATCHES = ["#F3E6D8", "#FBE1C8", "#FCE6B8", "#F8F0C6", "#DDEBD3", "#E1EEF8", "#EDE7F6", "#F9D7DC", "#EEF1F6"];
 
@@ -22,11 +22,20 @@ type Draft = {
   active: boolean;
   image?: string | null; // undefined = unchanged
   imageUrl: string | null;
+  /** Sold as hot / iced / blended, each with its own price */
+  multi: boolean;
+  variants: Record<string, { on: boolean; price: string; cost: string }>;
 };
+
+const noVariants = () => Object.fromEntries(VARIANT_NAMES.map((n) => [n, { on: true, price: "", cost: "" }]));
 
 const empty = (categoryId: number | null): Draft => ({
   name: "", categoryId, price: "", cost: "", sku: "", emoji: "🛍️", color: SWATCHES[0], active: true, imageUrl: null,
+  multi: false, variants: noVariants(),
 });
+
+/** Typical café mark-ups, only used to pre-fill empty boxes */
+const SUGGEST_EXTRA: Record<string, number> = { ຮ້ອນ: 0, ເຢັນ: 5000, ປັ່ນ: 10000 };
 
 export function ProductManager({ initialProducts, initialCategories }: { initialProducts: AdminProduct[]; initialCategories: PosCategory[] }) {
   const [products, setProducts] = useState(initialProducts);
@@ -53,8 +62,29 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
     setDraft({
       id: p.id, name: p.name, categoryId: p.categoryId, price: String(p.price), cost: String(p.cost), sku: p.sku ?? "",
       emoji: p.emoji ?? "🛍️", color: p.color ?? SWATCHES[0], active: p.active, imageUrl: p.imageUrl,
+      multi: !!p.variants?.length,
+      variants: p.variants?.length
+        ? Object.fromEntries(VARIANT_NAMES.map((n) => {
+            const v = p.variants!.find((x) => x.name === n);
+            return [n, v ? { on: true, price: String(v.price), cost: String(v.cost) } : { on: false, price: "", cost: "" }];
+          }))
+        : noVariants(),
     });
   }
+
+  function setMulti(on: boolean) {
+    if (!draft) return;
+    const base = Number(draft.price) || 0;
+    const variants = { ...draft.variants };
+    if (on)
+      for (const n of VARIANT_NAMES) {
+        const v = variants[n];
+        variants[n] = { ...v, price: v.price || (base ? String(base + SUGGEST_EXTRA[n]) : ""), cost: v.cost || draft.cost };
+      }
+    setDraft({ ...draft, multi: on, variants });
+  }
+  const setVariant = (n: string, patch: Partial<Draft["variants"][string]>) =>
+    draft && setDraft({ ...draft, variants: { ...draft.variants, [n]: { ...draft.variants[n], ...patch } } });
 
   async function save() {
     if (!draft) return;
@@ -64,6 +94,7 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
       await saveProduct({
         id: draft.id, name: draft.name, categoryId: draft.categoryId, price: draft.price, cost: draft.cost || 0,
         sku: draft.sku, emoji: draft.emoji, color: draft.color, active: draft.active, image: draft.image,
+        variants: draft.multi ? VARIANT_NAMES.filter((n) => draft.variants[n].on).map((n) => ({ name: n, ...draft.variants[n] })) : null,
       });
     } catch (e) {
       setSaving(false);
@@ -138,12 +169,20 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
                       </span>
                       <span>
                         <span className="block font-medium">{p.name}</span>
-                        {p.sku && <span className="num block text-sm text-muted">{p.sku}</span>}
+                        {p.variants?.length ? (
+                          <span className="block text-sm text-muted">{p.variants.map((v) => v.name).join(" · ")}</span>
+                        ) : (
+                          p.sku && <span className="num block text-sm text-muted">{p.sku}</span>
+                        )}
                       </span>
                     </div>
                   </td>
                   <td className="hidden py-2.5 md:table-cell">{catName(p.categoryId)}</td>
-                  <td className="num py-2.5 text-right font-semibold">{fmt(p.price)}</td>
+                  <td className="num py-2.5 text-right font-semibold">
+                    {p.variants?.length && p.variants.some((v) => v.price !== p.price)
+                      ? `${fmt(p.price)}–${fmt(Math.max(...p.variants.map((v) => v.price)))}`
+                      : fmt(p.price)}
+                  </td>
                   <td className="num hidden py-2.5 text-right text-muted md:table-cell">{fmt(p.cost)}</td>
                   <td className="num py-2.5 text-right">{p.price ? Math.round(((p.price - p.cost) / p.price) * 100) : 0}%</td>
                   <td className="px-5 py-2.5 text-right">
@@ -223,14 +262,45 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
                   ))}
                 </select>
               </Field>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="ລາຄາຂາຍ (₭)">
-                  <input inputMode="numeric" value={draft.price} onChange={(e) => setDraft({ ...draft, price: e.target.value.replace(/\D/g, "") })} className={tw(inputCls, "num")} />
-                </Field>
-                <Field label="ຕົ້ນທຶນ (₭)" hint={margin !== null ? `ກຳໄລຂັ້ນຕົ້ນ ${margin}%` : "ໃຊ້ຄິດໄລ່ກຳໄລສຸດທິ"}>
-                  <input inputMode="numeric" value={draft.cost} onChange={(e) => setDraft({ ...draft, cost: e.target.value.replace(/\D/g, "") })} className={tw(inputCls, "num")} />
-                </Field>
-              </div>
+              <label className="flex min-h-12 items-center justify-between gap-3 rounded-xl bg-white px-4 py-2 ring-1 ring-line">
+                <span>
+                  <span className="block">ມີຫຼາຍແບບ (ຮ້ອນ / ເຢັນ / ປັ່ນ)</span>
+                  <span className="block text-sm text-muted">ແຕະສິນຄ້າໃນໜ້າຂາຍ ແລ້ວເລືອກແບບ — ແຕ່ລະແບບມີລາຄາຂອງຕົນເອງ</span>
+                </span>
+                <input type="checkbox" checked={draft.multi} onChange={(e) => setMulti(e.target.checked)} className="size-6 shrink-0 accent-[var(--color-ink)]" />
+              </label>
+              {draft.multi ? (
+                <div className="grid gap-2">
+                  <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1.1fr)] gap-2 px-1 text-sm font-medium text-muted">
+                    <span>ແບບ</span>
+                    <span>ລາຄາຂາຍ (₭)</span>
+                    <span>ຕົ້ນທຶນ (₭)</span>
+                  </div>
+                  {VARIANT_NAMES.map((n) => {
+                    const v = draft.variants[n];
+                    return (
+                      <div key={n} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1.1fr)] items-center gap-2">
+                        <label className={`flex h-12 items-center gap-2 rounded-xl px-3 ring-1 ${v.on ? "bg-white ring-ink" : "bg-paper text-muted ring-line"}`}>
+                          <input type="checkbox" checked={v.on} onChange={(e) => setVariant(n, { on: e.target.checked })} className="size-5 shrink-0 accent-[var(--color-ink)]" />
+                          <span aria-hidden>{VARIANT_ICON[n]}</span>
+                          <span className="font-medium">{n}</span>
+                        </label>
+                        <input inputMode="numeric" disabled={!v.on} value={v.price} onChange={(e) => setVariant(n, { price: e.target.value.replace(/\D/g, "") })} className={tw(inputCls, "num")} aria-label={`ລາຄາ ${n}`} />
+                        <input inputMode="numeric" disabled={!v.on} value={v.cost} onChange={(e) => setVariant(n, { cost: e.target.value.replace(/\D/g, "") })} className={tw(inputCls, "num")} aria-label={`ຕົ້ນທຶນ ${n}`} />
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="ລາຄາຂາຍ (₭)">
+                    <input inputMode="numeric" value={draft.price} onChange={(e) => setDraft({ ...draft, price: e.target.value.replace(/\D/g, "") })} className={tw(inputCls, "num")} />
+                  </Field>
+                  <Field label="ຕົ້ນທຶນ (₭)" hint={margin !== null ? `ກຳໄລຂັ້ນຕົ້ນ ${margin}%` : "ໃຊ້ຄິດໄລ່ກຳໄລສຸດທິ"}>
+                    <input inputMode="numeric" value={draft.cost} onChange={(e) => setDraft({ ...draft, cost: e.target.value.replace(/\D/g, "") })} className={tw(inputCls, "num")} />
+                  </Field>
+                </div>
+              )}
               <Field label="ບາໂຄດ / ລະຫັດສິນຄ້າ" hint="ສະແກນບາໂຄດໃສ່ຊ່ອງຄົ້ນຫາໃນໜ້າຂາຍ ເພື່ອເພີ່ມສິນຄ້າໄວ">
                 <input value={draft.sku} onChange={(e) => setDraft({ ...draft, sku: e.target.value })} className={tw(inputCls, "num")} />
               </Field>
@@ -245,7 +315,7 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
                     <Trash2 className="size-5" /> ລຶບ
                   </button>
                 )}
-                <button onClick={save} disabled={saving || !draft.name || !draft.price} className={tw(btnPrimary, "ml-auto min-w-36")}>
+                <button onClick={save} disabled={saving || !draft.name || (draft.multi ? !VARIANT_NAMES.some((n) => draft.variants[n].on && draft.variants[n].price) : !draft.price)} className={tw(btnPrimary, "ml-auto min-w-36")}>
                   {saving ? "ກຳລັງບັນທຶກ…" : "ບັນທຶກ"}
                 </button>
               </div>

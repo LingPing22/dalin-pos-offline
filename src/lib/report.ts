@@ -80,7 +80,7 @@ export async function getReport(period: Period, now = Date.now()) {
   const items = new Map<string, { productId: number | null; name: string; qty: number; revenue: number; cost: number }>();
   for (const o of paid)
     for (const it of o.items) {
-      const k = String(it.productId ?? it.name);
+      const k = `${it.productId ?? it.name}:${it.variant ?? ""}`;
       const row = items.get(k) ?? { productId: it.productId, name: it.name, qty: 0, revenue: 0, cost: 0 };
       row.qty += it.qty;
       row.revenue += it.lineTotal;
