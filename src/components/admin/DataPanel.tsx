@@ -4,11 +4,12 @@ import { useRouter } from "next/navigation";
 import { DatabaseBackup, FlaskConical, RotateCcw, Trash2, Upload } from "lucide-react";
 import { Panel, btnDanger, btnGhost, btnPrimary } from "@/components/ui/form";
 import { tw } from "@/lib/tw";
-import { clearSales, exportBackup, getMeta, importBackup, loadDemo, resetAll } from "@/lib/store";
+import { clearSales, getMeta, importBackup, loadDemo, resetAll } from "@/lib/store";
+import { isCancel, shareBackup } from "@/lib/backup";
 import { getDb } from "@/lib/db";
 import { clearSession, readSession } from "@/lib/session";
 import { fmt } from "@/lib/money";
-import { fmtDate, fmtTime, toDateKey } from "@/lib/time";
+import { fmtDate, fmtTime } from "@/lib/time";
 
 type Danger = "" | "clear" | "reset" | "restore";
 
@@ -41,8 +42,7 @@ export function DataPanel() {
       const m = await fn();
       if (m) setMsg(m);
     } catch (e) {
-      const t = (e as Error).message;
-      if (!/abort|cancel/i.test(t)) setMsg(t || "ບໍ່ສຳເລັດ");
+      if (!isCancel(e)) setMsg((e as Error).message || "ບໍ່ສຳເລັດ");
     } finally {
       setBusy(false);
       setArmed("");
@@ -52,17 +52,7 @@ export function DataPanel() {
 
   const backup = () =>
     job(async () => {
-      const data = await exportBackup();
-      const name = `dalin-backup-${toDateKey(Date.now())}.json`;
-      const file = new File([JSON.stringify(data)], name, { type: "application/json" });
-      if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ files: [file], title: name });
-      } else {
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(file);
-        a.download = name;
-        a.click();
-      }
+      await shareBackup();
       return "ສ້າງໄຟລ໌ສຳຮອງແລ້ວ — ເກັບໄວ້ໃນ LINE, Google Drive ຫຼື Files";
     });
 

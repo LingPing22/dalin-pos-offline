@@ -6,6 +6,9 @@ export type Session = { uid: number; name: string; role: Role };
 
 const KEY = "dalin.session.v1";
 const HOURS = 14;
+const ACTIVE_KEY = "dalin.active.v1";
+const LOCK_KEY = "dalin.locked.v1";
+export const LOCK_EVENT = "dalin:lock";
 
 export function readSession(): Session | null {
   try {
@@ -19,10 +22,43 @@ export function readSession(): Session | null {
 
 export function writeSession(s: Session) {
   localStorage.setItem(KEY, JSON.stringify({ ...s, exp: Date.now() + HOURS * 3600_000 }));
+  setLocked(false);
 }
 
 export function clearSession() {
   localStorage.removeItem(KEY);
+  localStorage.removeItem(LOCK_KEY);
+}
+
+// ---------------------------------------------------------------- screen lock
+// Kept in localStorage so reloading the page does not get past the lock screen.
+
+export function touchActivity() {
+  localStorage.setItem(ACTIVE_KEY, String(Date.now()));
+}
+
+/** ms since someone last touched the screen */
+export function idleMs(): number {
+  const t = Number(localStorage.getItem(ACTIVE_KEY));
+  if (!t) {
+    touchActivity();
+    return 0;
+  }
+  return Date.now() - t;
+}
+
+export function isLocked(): boolean {
+  return localStorage.getItem(LOCK_KEY) === "1";
+}
+
+export function setLocked(locked: boolean) {
+  if (locked) {
+    localStorage.setItem(LOCK_KEY, "1");
+    window.dispatchEvent(new Event(LOCK_EVENT));
+  } else {
+    localStorage.removeItem(LOCK_KEY);
+    touchActivity();
+  }
 }
 
 /** undefined = still checking, null = logged out */

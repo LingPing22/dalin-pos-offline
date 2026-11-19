@@ -1,16 +1,17 @@
 "use client";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRight, LayoutDashboard, LogOut, Search, Store, X } from "lucide-react";
+import { ChevronRight, LayoutDashboard, Lock, LogOut, Search, Store, X } from "lucide-react";
 import { CartPanel, type Line } from "./CartPanel";
 import { PaymentSheet } from "./PaymentSheet";
 import { SaleDone } from "./SaleDone";
 import { DiscountSheet, QtySheet } from "./AmountSheet";
 import { Sheet } from "@/components/ui/Sheet";
+import { BackupReminder } from "@/components/BackupReminder";
 import { fmt } from "@/lib/money";
 import { computeTotals } from "@/lib/pricing";
 import { createOrder } from "@/lib/store";
-import { clearSession, type Session } from "@/lib/session";
+import { clearSession, setLocked, type Session } from "@/lib/session";
 import type { PaymentMethod, PosCategory, PosProduct, ReceiptData, ShopSettings } from "@/lib/types";
 
 type Props = {
@@ -169,6 +170,8 @@ export function PosScreen({ catalog, settings, user }: Props) {
         </div>
       </header>
 
+      {user.role === "owner" && <BackupReminder className="shrink-0 py-2 ring-0 border-b border-marigold" />}
+
       {/* ---------- Body ---------- */}
       <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[120px_1fr_minmax(340px,380px)]">
         {/* Categories: vertical rail in landscape, scrolling chips in portrait */}
@@ -278,6 +281,9 @@ export function PosScreen({ catalog, settings, user }: Props) {
               <LayoutDashboard className="size-6" /> ໜ້າຜູ້ຈັດການ
             </button>
           )}
+          <button onClick={() => { setSheet(""); setLocked(true); }} className="flex h-14 items-center gap-3 rounded-2xl bg-white px-4 text-lg ring-1 ring-line active:bg-ink-faint">
+            <Lock className="size-6" /> ລັອກໜ້າຈໍ
+          </button>
           <button onClick={logout} className="flex h-14 items-center gap-3 rounded-2xl bg-white px-4 text-lg text-chili ring-1 ring-line active:bg-chili-faint">
             <LogOut className="size-6" /> ອອກຈາກລະບົບ / ປ່ຽນກະ
           </button>

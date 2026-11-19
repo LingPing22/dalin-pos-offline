@@ -1,9 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowDownRight, ArrowUpRight, Banknote, CreditCard, HardDriveDownload, QrCode } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Banknote, CreditCard, QrCode } from "lucide-react";
 import { getReport, PERIODS, type Period, type Report } from "@/lib/report";
-import { getMeta, getReceipt, getSettings } from "@/lib/store";
+import { getReceipt, getSettings } from "@/lib/store";
 import { fmt } from "@/lib/money";
 import { DAY, fmtDate, fmtTime } from "@/lib/time";
 import { METHOD_LABEL, type PaymentMethod, type ReceiptData, type ShopSettings } from "@/lib/types";
@@ -22,14 +22,12 @@ export default function DashboardPage() {
   const [r, setR] = useState<Report | null>(null);
   const [settings, setSettings] = useState<ShopSettings | null>(null);
   const [bill, setBill] = useState<ReceiptData | null>(null);
-  const [needBackup, setNeedBackup] = useState(false);
 
   useEffect(() => {
     getReport(period).then(setR);
   }, [period]);
   useEffect(() => {
     getSettings().then(setSettings);
-    getMeta<number>("lastBackupAt").then((t) => setNeedBackup(!t || Date.now() - t > 7 * DAY));
   }, []);
 
   if (!r) return <p className="p-8 text-muted">ກຳລັງໂຫຼດ…</p>;
@@ -56,14 +54,6 @@ export default function DashboardPage() {
       </PageHeader>
 
       <div className="grid gap-5 px-6 lg:px-8">
-        {needBackup && c.bills + r.previous.bills > 0 && (
-          <Link href="/settings/#backup" className="flex items-center gap-3 rounded-2xl bg-marigold-faint px-5 py-4 text-ink ring-1 ring-marigold">
-            <HardDriveDownload className="size-6 shrink-0 text-marigold-deep" />
-            <span className="flex-1">
-              <b>ຄວນສຳຮອງຂໍ້ມູນ</b> — ຂໍ້ມູນທັງໝົດຢູ່ໃນ iPad ເຄື່ອງນີ້ເທົ່ານັ້ນ. ແຕະເພື່ອສຳຮອງ ແລ້ວສົ່ງໄຟລ໌ເກັບໄວ້ໃນ LINE ຫຼື Google Drive.
-            </span>
-          </Link>
-        )}
         {/* KPI band — one panel, four readings */}
         <section className="grid grid-cols-2 overflow-hidden rounded-2xl bg-white ring-1 ring-line lg:grid-cols-4">
           <Kpi label="ຍອດຂາຍ" value={`${fmt(c.total)} ₭`} now={c.total} before={r.previous.total} prevLabel={PREV_LABEL[period]} />

@@ -6,8 +6,9 @@
 import { getDb, type Category, type Expense, type Order, type Product, type User } from "./db";
 import { computeTotals } from "./pricing";
 import { DAY, HOUR, addMonths, fromDateKey, startOfDay, startOfMonth, toDateKey } from "./time";
-import { DEFAULT_SETTINGS, type PaymentMethod, type PosCategory, type PosProduct, type ReceiptData, type Role, type ShopSettings } from "./types";
+import { DEFAULT_SETTINGS, LOCK_MINUTES, type PaymentMethod, type PosCategory, type PosProduct, type ReceiptData, type Role, type ShopSettings } from "./types";
 import { STARTER_CATEGORIES, STARTER_MENU, generateDemo } from "./demo";
+import { DEFAULT_PINS, isWeakPin } from "./pin";
 import type { Session } from "./session";
 
 export class StoreError extends Error {}
@@ -44,10 +45,14 @@ export function ensureReady(): Promise<void> {
     ready = (async () => {
       const db = getDb();
       if ((await db.users.count()) === 0) {
+        // Hash PINs BEFORE the transaction: Safari closes an IndexedDB transaction
+        // as soon as it waits on anything that is not the database itself.
+        const ownerPin = await hashPin(DEFAULT_PINS.owner);
+        const cashierPin = await hashPin(DEFAULT_PINS.cashier);
         await db.transaction("rw", [db.users, db.categories, db.products, db.kv], async () => {
           await db.users.bulkAdd([
-            { name: "ເຈົ້າຂອງຮ້ານ", role: "owner", pinHash: await hashPin("1234"), active: true },
-            { name: "ພະນັກງານ", role: "cashier", pinHash: await hashPin("0000"), active: true },
+            { name: "ເຈົ້າຂອງຮ້ານ", role: "owner", pinHash: ownerPin, active: true },
+            { name: "ພະນັກງານ", role: "cashier", pinHash: cashierPin, active: true },
           ]);
           await seedMenu();
           await db.kv.put({ key: "settings", value: DEFAULT_SETTINGS });
@@ -55,7 +60,10 @@ export function ensureReady(): Promise<void> {
       }
       // Ask the browser not to clear our data when storage runs low
       navigator.storage?.persist?.().catch(() => {});
-    })();
+    })().catch((e) => {
+      ready = null; // allow a retry
+      throw e;
+    });
   }
   return ready;
 }
@@ -97,6 +105,7 @@ export async function getSettings(): Promise<ShopSettings> {
     receipt: { ...d.receipt, ...v.receipt },
     billPrefix: v.billPrefix || d.billPrefix,
     qrImage: v.qrImage ?? null,
+    security: { ...d.security, ...v.security },
   };
 }
 
@@ -111,6 +120,7 @@ export async function saveSettings(s: ShopSettings): Promise<ShopSettings> {
     receipt: { width: s.receipt.width === 58 ? 58 : 80 },
     billPrefix: (s.billPrefix || "DL").replace(/[^A-Za-z0-9]/g, "").slice(0, 6) || "DL",
     qrImage: s.qrImage,
+    security: { lockMinutes: (LOCK_MINUTES as readonly number[]).includes(s.security.lockMinutes) ? s.security.lockMinutes : DEFAULT_SETTINGS.security.lockMinutes },
   };
   await getDb().kv.put({ key: "settings", value: clean });
   return clean;
@@ -132,24 +142,50 @@ export async function listUsers(activeOnly = false): Promise<UserRow[]> {
   return all.filter((u) => !activeOnly || u.active).map(({ id, name, role, active }) => ({ id: id!, name, role, active }));
 }
 
-const attempts = new Map<number, { n: number; until: number }>();
-
-export async function login(userId: number, pin: string): Promise<Session> {
-  const a = attempts.get(userId);
+/** 5 wrong PINs in a row locks that key (a user, or manager approval) for 1 minute */
+const attempts = new Map<string, { n: number; until: number }>();
+function checkAttempts(key: string) {
+  const a = attempts.get(key);
   if (a && a.until > Date.now()) fail("ລອງຜິດຫຼາຍເທື່ອ, ລໍຖ້າ 1 ນາທີ");
+}
+function wrongPin(key: string, msg = "PIN ບໍ່ຖືກຕ້ອງ"): never {
+  const n = (attempts.get(key)?.n ?? 0) + 1;
+  attempts.set(key, { n: n >= 5 ? 0 : n, until: n >= 5 ? Date.now() + 60_000 : 0 });
+  return fail(msg);
+}
+
+/** Format + strength rules for any new PIN */
+function checkNewPin(pin: string) {
+  if (!/^\d{4,6}$/.test(pin)) fail("PIN ຕ້ອງເປັນຕົວເລກ 4-6 ໂຕ");
+  if (isWeakPin(pin)) fail("PIN ນີ້ເດົາງ່າຍເກີນໄປ (ເຊັ່ນ 1234, 0000) — ກະລຸນາເລືອກ PIN ອື່ນ");
+}
+
+async function checkPin(userId: number, pin: string): Promise<User> {
+  const key = `user:${userId}`;
+  checkAttempts(key);
   const u = await getDb().users.get(userId);
-  if (!u || !u.active || !(await verifyPin(pin, u.pinHash))) {
-    const n = (a?.n ?? 0) + 1;
-    attempts.set(userId, { n: n >= 5 ? 0 : n, until: n >= 5 ? Date.now() + 60_000 : 0 });
-    fail("PIN ບໍ່ຖືກຕ້ອງ");
-  }
-  attempts.delete(userId);
-  return { uid: u!.id!, name: u!.name, role: u!.role };
+  if (!u || !u.active || !(await verifyPin(pin, u.pinHash))) wrongPin(key);
+  attempts.delete(key);
+  return u!;
+}
+
+/** mustChangePin: the PIN is a factory default or too easy to guess — no session until it is changed. */
+export async function login(userId: number, pin: string): Promise<{ session: Session; mustChangePin: boolean }> {
+  const u = await checkPin(userId, pin);
+  return { session: { uid: u.id!, name: u.name, role: u.role }, mustChangePin: isWeakPin(pin) };
+}
+
+export async function changeOwnPin(userId: number, oldPin: string, newPin: string): Promise<Session> {
+  const u = await checkPin(userId, oldPin);
+  checkNewPin(newPin);
+  if (newPin === oldPin) fail("PIN ໃໝ່ຕ້ອງບໍ່ຊ້ຳກັບ PIN ເກົ່າ");
+  await getDb().users.update(u.id!, { pinHash: await hashPin(newPin) });
+  return { uid: u.id!, name: u.name, role: u.role };
 }
 
 export async function addUser(name: string, role: Role, pin: string) {
   if (!name.trim()) fail("ກະລຸນາໃສ່ຊື່");
-  if (!/^\d{4,6}$/.test(pin)) fail("PIN ຕ້ອງເປັນຕົວເລກ 4-6 ໂຕ");
+  checkNewPin(pin);
   await getDb().users.add({ name: name.trim().slice(0, 40), role, pinHash: await hashPin(pin), active: true });
 }
 
@@ -158,7 +194,7 @@ export async function updateUser(id: number, me: Session, patch: { name?: string
   const set: Partial<User> = {};
   if (patch.name?.trim()) set.name = patch.name.trim().slice(0, 40);
   if (patch.pin !== undefined) {
-    if (!/^\d{4,6}$/.test(patch.pin)) fail("PIN ຕ້ອງເປັນຕົວເລກ 4-6 ໂຕ");
+    checkNewPin(patch.pin);
     set.pinHash = await hashPin(patch.pin);
   }
   if (patch.active !== undefined) {
@@ -365,11 +401,27 @@ export async function getReceipt(id: string) {
   return o ? toReceipt(o) : null;
 }
 
-export async function voidOrder(id: string, reason: string) {
+/** Voiding needs a manager's PIN, and the bill keeps who approved it and why. */
+export async function voidOrder(id: string, reason: string, managerPin: string): Promise<string> {
   const db = getDb();
+  const why = reason.trim().slice(0, 200);
+  if (!why) fail("ກະລຸນາໃສ່ເຫດຜົນ");
+  checkAttempts("void");
+  const owners = (await db.users.toArray()).filter((u) => u.role === "owner" && u.active);
+  let approver: User | undefined;
+  for (const u of owners) if (await verifyPin(managerPin, u.pinHash)) approver = u;
+  if (!approver) wrongPin("void", "PIN ຜູ້ຈັດການບໍ່ຖືກຕ້ອງ");
+  attempts.delete("void");
   const o = await db.orders.get(id);
   if (!o || o.status !== "paid") fail("ບໍ່ພົບບິນ ຫຼື ຖືກຍົກເລີກແລ້ວ");
-  await db.orders.update(id, { status: "void", voidedAt: Date.now(), voidReason: reason.slice(0, 200) || null });
+  await db.orders.update(id, {
+    status: "void",
+    voidedAt: Date.now(),
+    voidReason: why,
+    voidedById: approver!.id!,
+    voidedByName: approver!.name,
+  });
+  return approver!.name;
 }
 
 export async function listOrdersForDay(dateKey: string): Promise<Order[]> {
@@ -421,9 +473,19 @@ export async function exportBackup() {
     db.expenses.toArray(),
     db.kv.toArray(),
   ]);
-  const data = { app: BACKUP_APP, version: 1, exportedAt: Date.now(), data: { categories, products, users, orders, expenses, kv } };
+  return { app: BACKUP_APP, version: 1, exportedAt: Date.now(), data: { categories, products, users, orders, expenses, kv } };
+}
+
+/** Called only once the file was really handed off (not when the share sheet was cancelled). */
+export async function markBackedUp() {
   await setMeta("lastBackupAt", Date.now());
-  return data;
+}
+
+/** Bills made since the last backup — the ones that would be lost with this iPad. */
+export async function backupStatus(): Promise<{ lastBackupAt: number | null; unsavedBills: number }> {
+  const last = (await getMeta<number>("lastBackupAt")) ?? null;
+  const unsavedBills = await getDb().orders.where("createdAt").above(last ?? 0).count();
+  return { lastBackupAt: last, unsavedBills };
 }
 
 export async function importBackup(json: unknown) {
@@ -446,7 +508,7 @@ export async function importBackup(json: unknown) {
   });
 }
 
-/** Wipes everything and starts fresh with the starter menu (PINs back to 1234 / 0000). */
+/** Wipes everything and starts fresh with the starter menu (PINs back to the factory defaults). */
 export async function resetAll() {
   const db = getDb();
   await db.delete();

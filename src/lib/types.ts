@@ -10,7 +10,11 @@ export type ShopSettings = {
   billPrefix: string;
   /** Static shop QR (e.g. from the bank app) shown on the QR payment screen */
   qrImage: string | null;
+  /** Lock the screen after this many idle minutes (0 = never) */
+  security: { lockMinutes: number };
 };
+
+export const LOCK_MINUTES = [0, 5, 10, 15, 30] as const;
 
 export const DEFAULT_SETTINGS: ShopSettings = {
   shop: {
@@ -25,6 +29,7 @@ export const DEFAULT_SETTINGS: ShopSettings = {
   receipt: { width: 80 },
   billPrefix: "DL",
   qrImage: null,
+  security: { lockMinutes: 10 },
 };
 
 export type PosProduct = {

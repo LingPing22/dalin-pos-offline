@@ -43,6 +43,9 @@ export type Order = {
   status: "paid" | "void";
   voidedAt: number | null;
   voidReason: string | null;
+  /** Manager who approved the void (missing on bills voided before this was recorded) */
+  voidedById?: number | null;
+  voidedByName?: string | null;
   items: OrderItem[];
 };
 export type Expense = { id?: number; date: number; category: string; note: string | null; amount: number; createdAt: number };

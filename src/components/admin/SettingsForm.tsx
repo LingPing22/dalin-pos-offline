@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { Check, ImagePlus, KeyRound, UserPlus } from "lucide-react";
 import { Field, PageHeader, Panel, btnDanger, btnGhost, btnPrimary, inputCls, resizeImage } from "@/components/ui/form";
 import { Sheet } from "@/components/ui/Sheet";
-import { METHOD_LABEL, type PaymentMethod, type ShopSettings } from "@/lib/types";
+import { LOCK_MINUTES, METHOD_LABEL, type PaymentMethod, type ShopSettings } from "@/lib/types";
 import { addUser, listUsers, saveSettings, updateUser } from "@/lib/store";
 import { readSession } from "@/lib/session";
 
@@ -143,6 +143,21 @@ export function SettingsForm({ initial, initialUsers, extra }: { initial: ShopSe
           </div>
         </Panel>
 
+        <Panel title="ລັອກໜ້າຈໍອັດຕະໂນມັດ" className="lg:col-span-2">
+          <div className="grid gap-3 px-5 pb-5">
+            <div className="grid grid-cols-5 gap-2">
+              {LOCK_MINUTES.map((m) => (
+                <button key={m} type="button" onClick={() => set("security", { lockMinutes: m })} className={`h-12 rounded-xl font-medium ${s.security.lockMinutes === m ? "bg-ink text-white" : "bg-white ring-1 ring-line"}`}>
+                  {m === 0 ? "ບໍ່ລັອກ" : <><span className="num">{m}</span> ນາທີ</>}
+                </button>
+              ))}
+            </div>
+            <p className="text-sm text-muted">
+              ຖ້າບໍ່ມີໃຜແຕະໜ້າຈໍຕາມເວລານີ້ ໜ້າຈໍຈະລັອກ ແລະ ຕ້ອງໃສ່ PIN ຈຶ່ງໃຊ້ຕໍ່ໄດ້. ລາຍການໃນບິນທີ່ກຳລັງຂາຍຢູ່ບໍ່ຫາຍ. ລັອກທັນທີໄດ້ຈາກເມນູຊື່ຜູ້ໃຊ້ໃນໜ້າຂາຍ.
+            </p>
+          </div>
+        </Panel>
+
         <Panel title="ຜູ້ໃຊ້ ແລະ ລະຫັດ PIN" className="lg:col-span-2" action={<button onClick={() => setPinFor("new")} className={tw(btnGhost, "h-10")}><UserPlus className="size-4" /> ເພີ່ມຜູ້ໃຊ້</button>}>
           <ul className="px-5 pb-4">
             {users.map((u) => (
@@ -211,7 +226,7 @@ function UserSheet({ target, onClose, onDone }: { target: U | "new" | null; onCl
             </Field>
           </>
         )}
-        <Field label="PIN ໃໝ່ (ຕົວເລກ 4-6 ໂຕ)">
+        <Field label="PIN ໃໝ່ (ຕົວເລກ 4-6 ໂຕ)" hint="ຫ້າມໃຊ້ PIN ທີ່ເດົາງ່າຍ ເຊັ່ນ 1234, 0000, 1111">
           <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" type="password" autoComplete="new-password" className={tw(inputCls, "num tracking-[0.4em]")} />
         </Field>
         {err && <p className="text-chili">{err}</p>}

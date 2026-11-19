@@ -1,11 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Check, Store, UserRound } from "lucide-react";
-import { Numpad, applyKey } from "@/components/ui/Numpad";
+import { ShieldAlert, Store, UserRound } from "lucide-react";
+import { applyKey } from "@/components/ui/Numpad";
+import { PinEntry } from "@/components/ui/PinEntry";
 import { fmtDayLong } from "@/lib/time";
-import { listUsers, login } from "@/lib/store";
-import { writeSession } from "@/lib/session";
+import { changeOwnPin, listUsers, login } from "@/lib/store";
+import { isWeakPin } from "@/lib/pin";
+import { writeSession, type Session } from "@/lib/session";
 
 type U = { id: number; name: string; role: "owner" | "cashier"; active: boolean };
 
@@ -18,6 +20,8 @@ export function LoginScreen() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState<Date | null>(null);
+  /** Set when the PIN just used is a factory default / too easy: pick a new one before going in */
+  const [change, setChange] = useState<{ old: string; first: string } | null>(null);
 
   useEffect(() => {
     listUsers(true)
@@ -25,7 +29,7 @@ export function LoginScreen() {
         setUsers(list);
         if (list.length === 1) setUser(list[0]);
       })
-            .catch((e) => setError(`ເປີດຖານຂໍ້ມູນໃນເຄື່ອງບໍ່ໄດ້ (${(e as Error)?.name ?? ""}: ${(e as Error)?.message ?? e})`));
+      .catch((e) => setError(`ເປີດຖານຂໍ້ມູນໃນເຄື່ອງບໍ່ໄດ້ (${(e as Error)?.name ?? ""}: ${(e as Error)?.message ?? e})`));
     setNow(new Date());
     const t = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(t);
@@ -33,16 +37,35 @@ export function LoginScreen() {
 
   async function submit(p = pin) {
     if (!user || p.length < 4 || busy) return;
-    setBusy(true);
+    setPin("");
     setError("");
+    if (change && !change.first) {
+      if (isWeakPin(p)) return setError("PIN ນີ້ເດົາງ່າຍເກີນໄປ — ເລືອກ PIN ອື່ນ");
+      if (p === change.old) return setError("PIN ໃໝ່ຕ້ອງບໍ່ຊ້ຳກັບ PIN ເກົ່າ");
+      return setChange({ ...change, first: p });
+    }
+    if (change && p !== change.first) {
+      setChange({ ...change, first: "" });
+      return setError("PIN ບໍ່ກົງກັນ — ຕັ້ງໃໝ່ອີກຄັ້ງ");
+    }
+    setBusy(true);
+    let session: Session;
     try {
-      writeSession(await login(user.id, p));
+      if (change) session = await changeOwnPin(user.id, change.old, p);
+      else {
+        const r = await login(user.id, p);
+        if (r.mustChangePin) {
+          setBusy(false);
+          return setChange({ old: p, first: "" });
+        }
+        session = r.session;
+      }
     } catch (e) {
       setBusy(false);
-      setPin("");
       setError((e as Error).message || "ເຂົ້າສູ່ລະບົບບໍ່ສຳເລັດ");
       return;
     }
+    writeSession(session);
     setBusy(false);
     router.replace(next && next.startsWith("/") ? next : "/pos/");
   }
@@ -98,27 +121,22 @@ export function LoginScreen() {
             </>
           ) : (
             <>
-              <button onClick={() => { setUser(null); setPin(""); setError(""); }} className="text-muted underline-offset-4 active:underline">
+              <button onClick={() => { setUser(null); setPin(""); setError(""); setChange(null); }} className="text-muted underline-offset-4 active:underline">
                 ປ່ຽນຜູ້ໃຊ້
               </button>
               <h1 className="mt-2 text-2xl font-semibold">{user.name}</h1>
-              <p className="mt-1 text-muted">ໃສ່ລະຫັດ PIN</p>
-              <div className="my-7 flex justify-center gap-4" aria-live="polite">
-                {Array.from({ length: Math.max(4, pin.length) }, (_, i) => (
-                  <span
-                    key={i}
-                    className={`size-4 rounded-full transition ${i < pin.length ? "bg-ink" : "bg-line"} ${error ? "bg-chili!" : ""}`}
-                  />
-                ))}
-              </div>
-              <p className="mb-4 h-6 text-center text-chili">{error}</p>
-              <Numpad
-                onKey={onKey}
-                extra="C"
-                confirm={<Check className="mx-auto size-7" />}
-                confirmDisabled={pin.length < 4 || busy}
-                onConfirm={() => submit()}
-              />
+              {change ? (
+                <>
+                  <p className="mt-3 flex gap-2.5 rounded-xl bg-marigold-faint px-4 py-3 text-[15px] ring-1 ring-marigold">
+                    <ShieldAlert className="size-5 shrink-0 text-marigold-deep" />
+                    <span>ເພື່ອຄວາມປອດໄພ ກະລຸນາປ່ຽນ PIN — PIN ນີ້ເປັນ PIN ເລີ່ມຕົ້ນ ຫຼື ເດົາງ່າຍເກີນໄປ.</span>
+                  </p>
+                  <p className="mt-4 font-medium">{change.first ? "ໃສ່ PIN ໃໝ່ອີກຄັ້ງ ເພື່ອຢືນຢັນ" : "ຕັ້ງ PIN ໃໝ່ (ຕົວເລກ 4-6 ໂຕ)"}</p>
+                </>
+              ) : (
+                <p className="mt-1 text-muted">ໃສ່ລະຫັດ PIN</p>
+              )}
+              <PinEntry pin={pin} error={error} busy={busy} onKey={onKey} onSubmit={() => submit()} />
             </>
           )}
         </div>

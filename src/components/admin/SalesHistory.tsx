@@ -16,6 +16,7 @@ export function SalesHistory({ settings }: { settings: ShopSettings }) {
   const [rows, setRows] = useState<Order[] | null>(null);
   const [open, setOpen] = useState<ReceiptData | null>(null);
   const [reason, setReason] = useState("");
+  const [managerPin, setManagerPin] = useState("");
   const [voiding, setVoiding] = useState(false);
   const [err, setErr] = useState("");
 
@@ -32,20 +33,25 @@ export function SalesHistory({ settings }: { settings: ShopSettings }) {
   const total = paid.reduce((s, r) => s + r.total, 0);
   const voided = (rows?.length ?? 0) - paid.length;
   const isToday = date === toDateKey(Date.now());
+  const openRow = open ? rows?.find((r) => r.id === open.id) : undefined;
 
   async function openBill(id: string) {
     setErr("");
     setReason("");
+    setManagerPin("");
     setVoiding(false);
     setOpen(await getReceipt(id));
   }
   async function voidBill() {
     if (!open) return;
+    setErr("");
     try {
-      await voidOrder(open.id, reason);
+      await voidOrder(open.id, reason, managerPin);
     } catch (e) {
+      setManagerPin("");
       return setErr((e as Error).message);
     }
+    setManagerPin("");
     setOpen({ ...open, status: "void" });
     setVoiding(false);
     load();
@@ -117,6 +123,13 @@ export function SalesHistory({ settings }: { settings: ShopSettings }) {
           <div className="p-5">
             <ReceiptSlip r={open} s={settings} className="mx-auto max-w-[340px] torn-edge shadow-md" />
             <div className="no-print mt-5 grid gap-3">
+              {open.status === "void" && openRow?.voidedAt && (
+                <p className="rounded-2xl bg-chili-faint px-4 py-3 text-[15px]">
+                  <b className="text-chili">ຍົກເລີກແລ້ວ</b> {fmtTime(openRow.voidedAt)}
+                  {openRow.voidedByName && <> · ອະນຸມັດໂດຍ <b>{openRow.voidedByName}</b></>}
+                  {openRow.voidReason && <span className="block text-muted">ເຫດຜົນ: {openRow.voidReason}</span>}
+                </p>
+              )}
               <button onClick={() => window.print()} className={btnPrimary}>
                 <Printer className="size-5" /> ພິມອີກຄັ້ງ
               </button>
@@ -125,10 +138,19 @@ export function SalesHistory({ settings }: { settings: ShopSettings }) {
                   <div className="rounded-2xl bg-chili-faint p-4">
                     <p className="font-medium text-chili">ຍົກເລີກບິນນີ້? ຍອດຈະຖືກຫັກອອກຈາກລາຍງານ.</p>
                     <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="ເຫດຜົນ (ເຊັ່ນ: ລູກຄ້າປ່ຽນໃຈ)" className={tw(inputCls, "mt-3")} />
+                    <input
+                      value={managerPin}
+                      onChange={(e) => setManagerPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                      placeholder="PIN ຜູ້ຈັດການ ເພື່ອອະນຸມັດ"
+                      inputMode="numeric"
+                      type="password"
+                      autoComplete="off"
+                      className={tw(inputCls, "num mt-2 tracking-[0.3em] placeholder:tracking-normal")}
+                    />
                     {err && <p className="mt-2 text-chili">{err}</p>}
                     <div className="mt-3 grid grid-cols-2 gap-2">
                       <button onClick={() => setVoiding(false)} className={btnGhost}>ບໍ່ຍົກເລີກ</button>
-                      <button onClick={voidBill} className={tw(btnPrimary, "bg-chili active:bg-chili")}>ຍົກເລີກບິນ</button>
+                      <button onClick={voidBill} disabled={!reason.trim() || managerPin.length < 4} className={tw(btnPrimary, "bg-chili active:bg-chili")}>ຍົກເລີກບິນ</button>
                     </div>
                   </div>
                 ) : (
