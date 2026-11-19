@@ -1,11 +1,12 @@
 "use client";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRight, LayoutDashboard, Lock, LogOut, Search, Store, X } from "lucide-react";
+import { ChevronRight, LayoutDashboard, Lock, LogOut, Search, Store, Wallet, X } from "lucide-react";
 import { CartPanel, type Line } from "./CartPanel";
 import { PaymentSheet } from "./PaymentSheet";
 import { SaleDone } from "./SaleDone";
 import { DiscountSheet, QtySheet } from "./AmountSheet";
+import { CloseShiftSheet } from "./ShiftGate";
 import { Sheet } from "@/components/ui/Sheet";
 import { BackupReminder } from "@/components/BackupReminder";
 import { fmt } from "@/lib/money";
@@ -13,14 +14,17 @@ import { computeTotals } from "@/lib/pricing";
 import { createOrder } from "@/lib/store";
 import { clearSession, setLocked, type Session } from "@/lib/session";
 import type { PaymentMethod, PosCategory, PosProduct, ReceiptData, ShopSettings } from "@/lib/types";
+import type { Shift } from "@/lib/db";
+import { fmtTime } from "@/lib/time";
 
 type Props = {
   catalog: { categories: PosCategory[]; products: PosProduct[] };
   settings: ShopSettings;
   user: Session;
+  shift: Shift;
 };
 
-export function PosScreen({ catalog, settings, user }: Props) {
+export function PosScreen({ catalog, settings, user, shift }: Props) {
   const router = useRouter();
   const { products, categories } = catalog;
   const byId = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
@@ -29,7 +33,7 @@ export function PosScreen({ catalog, settings, user }: Props) {
   const [q, setQ] = useState("");
   const [cart, setCart] = useState<{ id: number; qty: number }[]>([]);
   const [discount, setDiscount] = useState(0);
-  const [sheet, setSheet] = useState<"" | "pay" | "discount" | "cart" | "menu">("");
+  const [sheet, setSheet] = useState<"" | "pay" | "discount" | "cart" | "menu" | "close">("");
   const [qtyFor, setQtyFor] = useState<number | null>(null);
   const [bump, setBump] = useState<{ id: number; n: number } | null>(null);
   const [done, setDone] = useState<ReceiptData | null>(null);
@@ -276,6 +280,9 @@ export function PosScreen({ catalog, settings, user }: Props) {
       </Sheet>
       <Sheet open={sheet === "menu"} onClose={() => setSheet("")} title={user.name} width="max-w-sm">
         <div className="grid gap-2 p-4">
+          <p className="px-1 pb-1 text-sm text-muted">
+            ເປີດກະເວລາ <span className="num">{fmtTime(shift.openedAt)}</span>
+          </p>
           {user.role === "owner" && (
             <button onClick={() => router.push("/dashboard/")} className="flex h-14 items-center gap-3 rounded-2xl bg-white px-4 text-lg ring-1 ring-line active:bg-ink-faint">
               <LayoutDashboard className="size-6" /> ໜ້າຜູ້ຈັດການ
@@ -284,11 +291,16 @@ export function PosScreen({ catalog, settings, user }: Props) {
           <button onClick={() => { setSheet(""); setLocked(true); }} className="flex h-14 items-center gap-3 rounded-2xl bg-white px-4 text-lg ring-1 ring-line active:bg-ink-faint">
             <Lock className="size-6" /> ລັອກໜ້າຈໍ
           </button>
+          <button onClick={() => setSheet("close")} disabled={lines.length > 0} className="flex h-14 items-center gap-3 rounded-2xl bg-white px-4 text-lg ring-1 ring-line active:bg-ink-faint disabled:opacity-40">
+            <Wallet className="size-6" /> ນັບເງິນ ແລະ ປິດກະ
+          </button>
+          {lines.length > 0 && <p className="px-1 text-sm text-muted">ມີລາຍການຄ້າງໃນບິນ — ຂາຍ ຫຼື ລ້າງບິນກ່ອນປິດກະ</p>}
           <button onClick={logout} className="flex h-14 items-center gap-3 rounded-2xl bg-white px-4 text-lg text-chili ring-1 ring-line active:bg-chili-faint">
-            <LogOut className="size-6" /> ອອກຈາກລະບົບ / ປ່ຽນກະ
+            <LogOut className="size-6" /> ອອກຈາກລະບົບ (ກະຍັງເປີດ)
           </button>
         </div>
       </Sheet>
+      <CloseShiftSheet open={sheet === "close"} shift={shift} by={user} shopName={settings.shop.name} onClose={() => setSheet("")} onDone={logout} />
       <PaymentSheet open={sheet === "pay"} total={totals.total} settings={settings} busy={busy} error={payError} onClose={() => setSheet("")} onConfirm={pay} />
       <DiscountSheet open={sheet === "discount"} subtotal={totals.subtotal} current={discount} onClose={() => setSheet("")} onSave={setDiscount} />
       <QtySheet open={!!qtyProduct} name={qtyProduct?.name ?? ""} qty={qtyFor ? qtyIn(qtyFor) : 0} onClose={() => setQtyFor(null)} onSave={(n) => qtyFor && setQty(qtyFor, n)} />

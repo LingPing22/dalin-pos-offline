@@ -2,11 +2,12 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { clearSession } from "@/lib/session";
-import { LayoutDashboard, LogOut, Package, ReceiptText, Settings, ShoppingCart, Wallet } from "lucide-react";
+import { Clock, LayoutDashboard, LogOut, Package, ReceiptText, Settings, ShoppingCart, Wallet } from "lucide-react";
 
 const ITEMS = [
   { href: "/dashboard/", label: "ພາບລວມ", Icon: LayoutDashboard },
   { href: "/sales/", label: "ບິນຂາຍ", Icon: ReceiptText },
+  { href: "/shifts/", label: "ກະ", Icon: Clock },
   { href: "/products/", label: "ສິນຄ້າ", Icon: Package },
   { href: "/expenses/", label: "ຄ່າໃຊ້ຈ່າຍ", Icon: Wallet },
   { href: "/settings/", label: "ຕັ້ງຄ່າ", Icon: Settings },

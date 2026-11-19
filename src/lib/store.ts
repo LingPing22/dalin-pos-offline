@@ -3,7 +3,7 @@
  * The whole "backend" of Dalin POS Offline. Same jobs the server API did in the
  * online version, but everything is stored in this device's IndexedDB.
  */
-import { getDb, type Category, type Expense, type Order, type Product, type User } from "./db";
+import { getDb, type Category, type Expense, type Order, type Product, type Shift, type ShiftSummary, type User } from "./db";
 import { computeTotals } from "./pricing";
 import { DAY, HOUR, addMonths, fromDateKey, startOfDay, startOfMonth, toDateKey } from "./time";
 import { DEFAULT_SETTINGS, LOCK_MINUTES, type PaymentMethod, type PosCategory, type PosProduct, type ReceiptData, type Role, type ShopSettings } from "./types";
@@ -343,6 +343,8 @@ export async function createOrder(input: OrderInput, session: Session): Promise<
     if (it.productId && q > 0) qtyById.set(it.productId, Math.min(9999, (qtyById.get(it.productId) ?? 0) + q));
   }
   if (!qtyById.size) fail("ບໍ່ມີສິນຄ້າໃນບິນ");
+  const shift = await getOpenShift();
+  if (!shift) fail("ກະລຸນາເປີດກະກ່ອນຂາຍ");
   const products = await db.products.bulkGet([...qtyById.keys()]);
   if (products.some((p) => !p)) fail("ບາງສິນຄ້າບໍ່ມີໃນລະບົບແລ້ວ");
 
@@ -388,6 +390,7 @@ export async function createOrder(input: OrderInput, session: Session): Promise<
       status: "paid",
       voidedAt: null,
       voidReason: null,
+      shiftId: shift!.id,
       items: lines.map((l) => ({ productId: l.p.id!, name: l.p.name, price: l.price, cost: l.cost, qty: l.qty, lineTotal: l.price * l.qty })),
     };
     await db.orders.add(o);
@@ -434,6 +437,82 @@ export async function ordersBetween(from: number, to: number) {
   return getDb().orders.where("createdAt").between(from, to, true, false).toArray();
 }
 
+// ---------------------------------------------------------------- shifts
+/** The drawer's current shift, whoever opened it (one drawer, one iPad: at most one is open). */
+export async function getOpenShift(): Promise<Shift | null> {
+  const last = await getDb().shifts.orderBy("openedAt").last();
+  return last && last.closedAt === null ? last : null;
+}
+
+export async function lastClosedShift(): Promise<Shift | null> {
+  const rows = await getDb().shifts.orderBy("openedAt").reverse().limit(5).toArray();
+  return rows.find((s) => s.closedAt !== null) ?? null;
+}
+
+export async function openShift(session: Session, openingCash: number): Promise<Shift> {
+  const cash = Math.round(openingCash);
+  if (!(cash >= 0)) fail("ຈຳນວນເງິນບໍ່ຖືກຕ້ອງ");
+  if (await getOpenShift()) fail("ມີກະທີ່ຍັງເປີດຢູ່ — ປິດກະນັ້ນກ່ອນ");
+  const shift: Shift = {
+    id: newId(),
+    userId: session.uid,
+    userName: session.name,
+    openedAt: Date.now(),
+    openingCash: cash,
+    closedAt: null,
+    closedById: null,
+    closedByName: null,
+    expectedCash: null,
+    countedCash: null,
+    summary: null,
+  };
+  await getDb().shifts.add(shift);
+  return shift;
+}
+
+/** Live totals for an open shift; the frozen copy for a closed one. */
+export async function shiftSummary(shift: Shift): Promise<ShiftSummary> {
+  if (shift.summary) return shift.summary;
+  const rows = (await ordersBetween(shift.openedAt, (shift.closedAt ?? Date.now()) + 1)).filter((o) => o.shiftId === shift.id);
+  const paid = rows.filter((o) => o.status === "paid");
+  const voided = rows.filter((o) => o.status === "void");
+  const byMethod: Record<PaymentMethod, number> = { cash: 0, qr: 0, card: 0 };
+  for (const o of paid) byMethod[o.paymentMethod] += o.total;
+  return {
+    bills: paid.length,
+    total: paid.reduce((n, o) => n + o.total, 0),
+    byMethod,
+    discount: paid.reduce((n, o) => n + o.discount, 0),
+    discountBills: paid.filter((o) => o.discount > 0).length,
+    voids: voided.length,
+    voidTotal: voided.reduce((n, o) => n + o.total, 0),
+  };
+}
+
+export async function closeShift(id: string, countedCash: number, by: Session): Promise<Shift> {
+  const db = getDb();
+  const counted = Math.round(countedCash);
+  if (!(counted >= 0)) fail("ຈຳນວນເງິນບໍ່ຖືກຕ້ອງ");
+  const shift = await db.shifts.get(id);
+  if (!shift || shift.closedAt !== null) fail("ກະນີ້ຖືກປິດແລ້ວ");
+  const summary = await shiftSummary(shift!);
+  const closed: Shift = {
+    ...shift!,
+    closedAt: Date.now(),
+    closedById: by.uid,
+    closedByName: by.name,
+    expectedCash: shift!.openingCash + summary.byMethod.cash,
+    countedCash: counted,
+    summary,
+  };
+  await db.shifts.put(closed);
+  return closed;
+}
+
+export async function listShifts(limit = 100): Promise<Shift[]> {
+  return getDb().shifts.orderBy("openedAt").reverse().limit(limit).toArray();
+}
+
 // ---------------------------------------------------------------- expenses
 export async function listExpenses(monthKey: string): Promise<Expense[]> {
   const start = fromDateKey(`${monthKey}-01`) ?? startOfMonth(Date.now());
@@ -465,15 +544,16 @@ export const BACKUP_APP = "dalin-pos-offline";
 
 export async function exportBackup() {
   const db = getDb();
-  const [categories, products, users, orders, expenses, kv] = await Promise.all([
+  const [categories, products, users, orders, expenses, kv, shifts] = await Promise.all([
     db.categories.toArray(),
     db.products.toArray(),
     db.users.toArray(),
     db.orders.toArray(),
     db.expenses.toArray(),
     db.kv.toArray(),
+    db.shifts.toArray(),
   ]);
-  return { app: BACKUP_APP, version: 1, exportedAt: Date.now(), data: { categories, products, users, orders, expenses, kv } };
+  return { app: BACKUP_APP, version: 2, exportedAt: Date.now(), data: { categories, products, users, orders, expenses, kv, shifts } };
 }
 
 /** Called only once the file was really handed off (not when the share sheet was cancelled). */
@@ -497,14 +577,16 @@ export async function importBackup(json: unknown) {
   }
   if (!(d.users as User[]).some((u) => u.role === "owner" && u.active)) fail("ໄຟລ໌ສຳຮອງບໍ່ມີບັນຊີຜູ້ຈັດການ");
   const db = getDb();
-  await db.transaction("rw", [db.categories, db.products, db.users, db.orders, db.expenses, db.kv], async () => {
-    await Promise.all([db.categories.clear(), db.products.clear(), db.users.clear(), db.orders.clear(), db.expenses.clear(), db.kv.clear()]);
+  const shifts = Array.isArray(d.shifts) ? (d.shifts as Shift[]) : []; // backups from before shifts existed
+  await db.transaction("rw", [db.categories, db.products, db.users, db.orders, db.expenses, db.kv, db.shifts], async () => {
+    await Promise.all([db.categories.clear(), db.products.clear(), db.users.clear(), db.orders.clear(), db.expenses.clear(), db.kv.clear(), db.shifts.clear()]);
     await db.categories.bulkAdd(d.categories as Category[]);
     await db.products.bulkAdd(d.products as Product[]);
     await db.users.bulkAdd(d.users as User[]);
     await db.orders.bulkAdd(d.orders as Order[]);
     await db.expenses.bulkAdd(d.expenses as Expense[]);
     await db.kv.bulkAdd(d.kv as { key: string; value: unknown }[]);
+    await db.shifts.bulkAdd(shifts);
   });
 }
 
@@ -517,12 +599,13 @@ export async function resetAll() {
   await ensureReady();
 }
 
-/** Clears sales + expenses only (keeps menu, users, settings). */
+/** Clears sales, shifts + expenses only (keeps menu, users, settings). */
 export async function clearSales() {
   const db = getDb();
-  await db.transaction("rw", db.orders, db.expenses, async () => {
+  await db.transaction("rw", db.orders, db.expenses, db.shifts, async () => {
     await db.orders.clear();
     await db.expenses.clear();
+    await db.shifts.clear();
   });
 }
 

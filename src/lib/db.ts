@@ -46,7 +46,35 @@ export type Order = {
   /** Manager who approved the void (missing on bills voided before this was recorded) */
   voidedById?: number | null;
   voidedByName?: string | null;
+  /** Shift the bill was rung up in (missing on bills from before shifts existed) */
+  shiftId?: string | null;
   items: OrderItem[];
+};
+export type ShiftSummary = {
+  bills: number;
+  total: number;
+  byMethod: Record<PaymentMethod, number>;
+  discount: number;
+  discountBills: number;
+  voids: number;
+  voidTotal: number;
+};
+/** One person's turn at the (single) cash drawer. Only one shift is open at a time. */
+export type Shift = {
+  id: string;
+  userId: number;
+  userName: string;
+  openedAt: number;
+  openingCash: number;
+  closedAt: number | null;
+  closedById: number | null;
+  closedByName: string | null;
+  /** What the drawer should hold: opening cash + cash sales */
+  expectedCash: number | null;
+  /** What was really counted, entered without seeing expectedCash */
+  countedCash: number | null;
+  /** Frozen at closing so later voids don't rewrite a finished shift */
+  summary: ShiftSummary | null;
 };
 export type Expense = { id?: number; date: number; category: string; note: string | null; amount: number; createdAt: number };
 export type KV = { key: string; value: unknown };
@@ -58,6 +86,7 @@ export class DalinDB extends Dexie {
   orders!: Table<Order, string>;
   expenses!: Table<Expense, number>;
   kv!: Table<KV, string>;
+  shifts!: Table<Shift, string>;
 
   constructor() {
     super("dalin-pos");
@@ -69,6 +98,7 @@ export class DalinDB extends Dexie {
       expenses: "++id, date",
       kv: "key",
     });
+    this.version(2).stores({ shifts: "id, openedAt" });
   }
 }
 
