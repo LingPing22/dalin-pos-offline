@@ -1,8 +1,8 @@
 "use client";
 import { tw } from "@/lib/tw";
 import { useRef, useState } from "react";
-import { ImagePlus, Plus, Search, Trash2 } from "lucide-react";
-import { Field, PageHeader, btnDanger, btnGhost, btnPrimary, inputCls, resizeImage } from "@/components/ui/form";
+import { Crop as CropIcon, ImagePlus, Plus, Search, Trash2 } from "lucide-react";
+import { Field, PageHeader, btnDanger, btnGhost, btnPrimary, inputCls } from "@/components/ui/form";
 import { Sheet } from "@/components/ui/Sheet";
 import { fmt } from "@/lib/money";
 import { addCategory, deleteCategory, deleteProduct, getCategories, listProducts, saveProduct, updateCategory, type AdminProduct } from "@/lib/store";
@@ -10,6 +10,8 @@ import { VARIANT_NAMES, choicesOf, typeFromName, type PosCategory } from "@/lib/
 import { VariantTag, variantStyle } from "@/components/VariantTag";
 import { stepPrice } from "@/lib/drink-menu";
 import { DrinkMenuTidy } from "@/components/admin/DrinkMenuTidy";
+import { PhotoCropper } from "@/components/admin/PhotoCropper";
+import { prepareSource, type Crop } from "@/lib/photo-crop";
 
 const SWATCHES = ["#F3E6D8", "#FBE1C8", "#FCE6B8", "#F8F0C6", "#DDEBD3", "#E1EEF8", "#EDE7F6", "#F9D7DC", "#EEF1F6"];
 
@@ -25,6 +27,8 @@ type Draft = {
   active: boolean;
   image?: string | null; // undefined = unchanged
   imageUrl: string | null;
+  /** The full photo picked this time and how it was cropped, so it can be re-cropped without losing detail */
+  photo?: { src: string; crop: Crop };
   /** Sold as hot / iced / blended, each with its own price */
   multi: boolean;
   variants: Record<string, { on: boolean; price: string; cost: string }>;
@@ -49,6 +53,16 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
   const [err, setErr] = useState("");
   const [saving, setSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [cropping, setCropping] = useState<{ src: string; crop?: Crop } | null>(null);
+  /** Working copies of picked photos (object URLs), freed when the editor closes */
+  const sources = useRef<string[]>([]);
+
+  function close() {
+    sources.current.forEach((u) => URL.revokeObjectURL(u));
+    sources.current = [];
+    setCropping(null);
+    setDraft(null);
+  }
 
   async function reload() {
     const [p, c] = await Promise.all([listProducts(), getCategories()]);
@@ -111,22 +125,32 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
       return setErr((e as Error).message || "ບັນທຶກບໍ່ສຳເລັດ");
     }
     setSaving(false);
-    setDraft(null);
+    close();
     reload();
   }
 
   async function remove() {
     if (!draft?.id) return;
     await deleteProduct(draft.id);
-    setDraft(null);
+    close();
     reload();
   }
 
+  /** A photo from the camera or the library goes straight to the cropper */
   async function onFile(f?: File) {
     if (!f || !draft) return;
-    const dataUrl = await resizeImage(f);
-    setDraft({ ...draft, image: dataUrl, imageUrl: dataUrl });
+    setErr("");
+    try {
+      const src = await prepareSource(f);
+      sources.current.push(src);
+      setCropping({ src });
+    } catch (e) {
+      setErr((e as Error).message || "ເປີດຮູບບໍ່ໄດ້");
+    }
   }
+
+  /** Re-crop: from the full photo picked this time, else from the saved picture */
+  const recrop = () => draft?.imageUrl && setCropping(draft.photo ?? { src: draft.imageUrl });
 
   const price = Number(draft?.price || 0);
   const cost = Number(draft?.cost || 0);
@@ -214,30 +238,33 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
       </div>
 
       {/* ---------- Edit / create ---------- */}
-      <Sheet open={!!draft} onClose={() => setDraft(null)} title={draft?.id ? "ແກ້ໄຂສິນຄ້າ" : "ເພີ່ມສິນຄ້າ"} width="max-w-2xl">
+      <Sheet open={!!draft} onClose={close} title={draft?.id ? "ແກ້ໄຂສິນຄ້າ" : "ເພີ່ມສິນຄ້າ"} width="max-w-2xl" dismissable={!cropping}>
         {draft && (
           <div className="grid gap-5 p-6 md:grid-cols-[200px_1fr]">
             <div>
-              <button
-                type="button"
-                onClick={() => fileRef.current?.click()}
-                className="grid aspect-square w-full place-items-center overflow-hidden rounded-2xl ring-1 ring-line"
-                style={{ background: draft.color }}
-              >
-                {draft.imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={draft.imageUrl} alt="" className="size-full object-cover" />
-                ) : (
-                  <span className="text-6xl">{draft.emoji}</span>
-                )}
-              </button>
-              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
+              <p className="mb-1.5 text-sm font-medium text-muted">ໜ້າຂາຍຈະເຫັນແບບນີ້</p>
+              <TilePreview draft={draft} onClick={() => (draft.imageUrl ? recrop() : fileRef.current?.click())} />
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  onFile(e.target.files?.[0]);
+                  e.target.value = ""; // picking the same photo again still opens the cropper
+                }}
+              />
               <div className="mt-2 grid gap-2">
+                {draft.imageUrl && (
+                  <button type="button" onClick={recrop} className={tw(btnGhost, "h-11")}>
+                    <CropIcon className="size-5" /> ຕັດ / ປັບຮູບ
+                  </button>
+                )}
                 <button type="button" onClick={() => fileRef.current?.click()} className={tw(btnGhost, "h-11")}>
                   <ImagePlus className="size-5" /> {draft.imageUrl ? "ປ່ຽນຮູບ" : "ຖ່າຍ/ເລືອກຮູບ"}
                 </button>
                 {draft.imageUrl && (
-                  <button type="button" onClick={() => setDraft({ ...draft, image: null, imageUrl: null })} className={tw(btnDanger, "h-10")}>
+                  <button type="button" onClick={() => setDraft({ ...draft, image: null, imageUrl: null, photo: undefined })} className={tw(btnDanger, "h-10")}>
                     ລຶບຮູບ
                   </button>
                 )}
@@ -340,8 +367,42 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
         )}
       </Sheet>
 
+      <PhotoCropper
+        src={cropping?.src ?? null}
+        crop={cropping?.crop}
+        onCancel={() => setCropping(null)}
+        onDone={(image, crop) => {
+          if (draft && cropping) setDraft({ ...draft, image, imageUrl: image, photo: { src: cropping.src, crop } });
+          setCropping(null);
+        }}
+      />
+
       <CategorySheet open={catsOpen} onClose={() => setCatsOpen(false)} categories={categories} onChanged={reload} />
     </main>
+  );
+}
+
+/** A till tile, drawn the same way as on the sales screen, so the crop can be judged before saving */
+function TilePreview({ draft, onClick }: { draft: Draft; onClick: () => void }) {
+  const first = draft.multi ? VARIANT_NAMES.find((n) => draft.variants[n].on) : undefined;
+  const type = first ?? (draft.multi ? null : typeFromName(draft.name));
+  const price = Number((first ? draft.variants[first].price : draft.price) || 0);
+  return (
+    <button type="button" onClick={onClick} className="relative flex w-full flex-col overflow-hidden rounded-2xl bg-white text-left ring-1 ring-line active:scale-[0.98]">
+      <div className="grid aspect-[4/3] w-full place-items-center overflow-hidden" style={{ background: draft.color }}>
+        {draft.imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={draft.imageUrl} alt="" className="size-full object-cover" />
+        ) : (
+          <span className="text-5xl drop-shadow-sm">{draft.emoji}</span>
+        )}
+      </div>
+      {type && <VariantTag name={type} solid className="absolute left-2 top-2 px-2.5 py-1 text-sm shadow-sm" />}
+      <div className="px-3 pb-3 pt-2">
+        <span className={`line-clamp-2 min-h-[2.6em] text-[15px] font-medium leading-snug ${draft.name ? "" : "text-muted"}`}>{draft.name || "ຊື່ສິນຄ້າ"}</span>
+        <span className="num mt-1 block text-[17px] font-semibold">{fmt(price)} ₭</span>
+      </div>
+    </button>
   );
 }
 
