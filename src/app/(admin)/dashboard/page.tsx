@@ -11,6 +11,7 @@ import { PageHeader, Panel } from "@/components/ui/form";
 import { Sheet } from "@/components/ui/Sheet";
 import { ReceiptSlip } from "@/components/ReceiptSlip";
 import { SalesChart } from "@/components/admin/SalesChart";
+import { SalesExport } from "@/components/admin/SalesExport";
 
 const PERIOD_LABEL: Record<Period, string> = { today: "ມື້ນີ້", week: "ອາທິດນີ້", month: "ເດືອນນີ້" };
 const PREV_LABEL: Record<Period, string> = { today: "ມື້ວານ", week: "ອາທິດກ່ອນ", month: "ເດືອນກ່ອນ" };
@@ -38,6 +39,7 @@ export default function DashboardPage() {
   return (
     <main className="pb-10">
       <PageHeader title={`ພາບລວມ${PERIOD_LABEL[period]}`} sub={rangeText}>
+        <SalesExport />
         <div className="flex rounded-2xl bg-white p-1 ring-1 ring-line" role="tablist">
           {PERIODS.map((p) => (
             <button
@@ -230,7 +232,7 @@ function TopItems({ items }: { items: Report["topItems"] }) {
       ) : (
         <ol className="px-5 pb-4">
           {items.map((it, i) => (
-            <li key={it.productId ?? it.name} className="grid grid-cols-[1.75rem_1fr_auto] items-center gap-x-3 py-2">
+            <li key={`${it.productId ?? ""}:${it.name}`} className="grid grid-cols-[1.75rem_1fr_auto] items-center gap-x-3 py-2">
               <span className="num text-sm text-muted">{i + 1}</span>
               <div className="min-w-0">
                 <div className="flex justify-between gap-3">

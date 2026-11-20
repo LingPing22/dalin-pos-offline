@@ -10,6 +10,7 @@ import { getDb } from "@/lib/db";
 import { clearSession, readSession } from "@/lib/session";
 import { fmt } from "@/lib/money";
 import { fmtDate, fmtTime } from "@/lib/time";
+import { SalesExport } from "@/components/admin/SalesExport";
 
 type Danger = "" | "clear" | "reset" | "restore";
 
@@ -98,6 +99,8 @@ export function DataPanel() {
           <button onClick={backup} disabled={busy} className={tw(btnPrimary, "h-14 text-lg")}>
             <DatabaseBackup className="size-5" /> ສຳຮອງຂໍ້ມູນ (ສົ່ງເປັນໄຟລ໌)
           </button>
+          <p className="text-sm text-muted">ໄຟລ໌ສຳຮອງ (.json) ໃຊ້ສຳລັບກູ້ຄືນເທົ່ານັ້ນ ເປີດອ່ານບໍ່ໄດ້ — ຢາກເບິ່ງຍອດ ໃຫ້ໃຊ້ປຸ່ມລຸ່ມນີ້</p>
+          <SalesExport />
           <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => pickFile(e.target.files?.[0])} />
           {armed === "restore" ? (
             <button

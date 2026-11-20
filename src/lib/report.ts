@@ -1,6 +1,6 @@
 "use client";
 import { expensesBetween, ordersBetween } from "./store";
-import type { Expense, Order } from "./db";
+import { itemsSold, totals } from "./sales-sheets";
 import { DAY, HOUR, TZ_OFFSET_MS, addMonths, startOfDay, startOfMonth, startOfWeek } from "./time";
 import type { PaymentMethod } from "./types";
 
@@ -30,19 +30,6 @@ export function periodRange(period: Period, now = Date.now()): Range {
   // Compare like with like: the same elapsed time in the previous period
   const elapsed = now - start;
   return { start, end: now + 1, prevStart, prevEnd: Math.min(prevStart + elapsed + 1, start), bucket, slots };
-}
-
-function totals(orders: Order[], expenses: Expense[]) {
-  const paid = orders.filter((o) => o.status === "paid");
-  const sum = (f: (o: Order) => number) => paid.reduce((s, o) => s + f(o), 0);
-  const total = sum((o) => o.total);
-  const discount = sum((o) => o.discount);
-  const tax = sum((o) => o.tax);
-  const fee = sum((o) => o.fee);
-  const cost = sum((o) => o.cost);
-  const exp = expenses.reduce((s, e) => s + e.amount, 0);
-  const netRevenue = total - tax - fee;
-  return { bills: paid.length, gross: total + discount, discount, total, tax, fee, netRevenue, cost, expenses: exp, netProfit: netRevenue - cost - exp };
 }
 
 export type Report = Awaited<ReturnType<typeof getReport>>;
@@ -77,17 +64,7 @@ export async function getReport(period: Period, now = Date.now()) {
     return { method: m, total: list.reduce((s, o) => s + o.total, 0), fee: list.reduce((s, o) => s + o.fee, 0), bills: list.length };
   });
 
-  const items = new Map<string, { productId: number | null; name: string; qty: number; revenue: number; cost: number }>();
-  for (const o of paid)
-    for (const it of o.items) {
-      const k = `${it.productId ?? it.name}:${it.variant ?? ""}`;
-      const row = items.get(k) ?? { productId: it.productId, name: it.name, qty: 0, revenue: 0, cost: 0 };
-      row.qty += it.qty;
-      row.revenue += it.lineTotal;
-      row.cost += it.cost * it.qty;
-      items.set(k, row);
-    }
-  const topItems = [...items.values()].sort((a, b) => b.qty - a.qty).slice(0, 8);
+  const topItems = itemsSold(orders).sort((a, b) => b.qty - a.qty).slice(0, 8);
 
   const byCat = new Map<string, number>();
   for (const e of expenses) byCat.set(e.category, (byCat.get(e.category) ?? 0) + e.amount);

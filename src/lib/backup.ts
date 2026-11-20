@@ -10,16 +10,26 @@ import { toDateKey } from "./time";
 export async function shareBackup() {
   const data = await exportBackup();
   const name = `dalin-backup-${toDateKey(Date.now())}.json`;
-  const file = new File([JSON.stringify(data)], name, { type: "application/json" });
-  if (navigator.canShare?.({ files: [file] })) {
-    await navigator.share({ files: [file], title: name });
-  } else {
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(file);
-    a.download = name;
-    a.click();
-  }
+  await shareFile(new File([JSON.stringify(data)], name, { type: "application/json" }));
   await markBackedUp();
+}
+
+/** iPad share sheet (Files / LINE / Numbers / Excel); a plain download elsewhere. Start it from a tap. */
+export async function shareFile(file: File) {
+  if (navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: file.name });
+      return;
+    } catch (e) {
+      // Cancelled by the user: stop. Not allowed (tap expired): fall back to a download.
+      if ((e as Error)?.name !== "NotAllowedError") throw e;
+    }
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(file);
+  a.download = file.name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
 }
 
 export const isCancel = (e: unknown) => /abort|cancel/i.test(`${(e as Error)?.name} ${(e as Error)?.message}`);
