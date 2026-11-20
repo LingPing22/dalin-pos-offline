@@ -317,15 +317,13 @@ export async function applyDrinkMenu(): Promise<number> {
   });
 }
 
-export async function deleteProduct(id: number): Promise<"deleted" | "hidden"> {
-  const db = getDb();
-  const used = await db.orders.filter((o) => o.items.some((i) => i.productId === id)).count();
-  if (used) {
-    await db.products.update(id, { active: false, updatedAt: Date.now() });
-    return "hidden";
-  }
-  await db.products.delete(id);
-  return "deleted";
+/**
+ * Really removes the product. Old bills keep their own copy of each line's name, price and cost,
+ * so receipts, reports and Excel stay exactly as they were. (To only stop selling something for a
+ * while, switch off "ສະແດງໃນໜ້າຂາຍ" instead.)
+ */
+export async function deleteProduct(id: number) {
+  await getDb().products.delete(id);
 }
 
 export async function addCategory(name: string, icon: string) {

@@ -52,6 +52,8 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
   const [catsOpen, setCatsOpen] = useState(false);
   const [err, setErr] = useState("");
   const [saving, setSaving] = useState(false);
+  /** Delete asks for a second tap */
+  const [confirmDel, setConfirmDel] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [cropping, setCropping] = useState<{ src: string; crop?: Crop } | null>(null);
   /** Working copies of picked photos (object URLs), freed when the editor closes */
@@ -75,6 +77,7 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
 
   function edit(p: AdminProduct) {
     setErr("");
+    setConfirmDel(false);
     setDraft({
       id: p.id, name: p.name, categoryId: p.categoryId, price: String(p.price), cost: String(p.cost), sku: p.sku ?? "",
       emoji: p.emoji ?? "🛍️", color: p.color ?? SWATCHES[0], active: p.active, imageUrl: p.imageUrl,
@@ -131,6 +134,7 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
 
   async function remove() {
     if (!draft?.id) return;
+    if (!confirmDel) return setConfirmDel(true);
     await deleteProduct(draft.id);
     close();
     reload();
@@ -160,7 +164,7 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
     <main className="pb-10">
       <PageHeader title="ສິນຄ້າ" sub={`${products.filter((p) => p.active).length} ລາຍການທີ່ຂາຍຢູ່`}>
         <button onClick={() => setCatsOpen(true)} className={btnGhost}>ຈັດການໝວດ</button>
-        <button onClick={() => { setErr(""); setDraft(empty(typeof cat === "number" ? cat : categories[0]?.id ?? null)); }} className={btnPrimary}>
+        <button onClick={() => { setErr(""); setConfirmDel(false); setDraft(empty(typeof cat === "number" ? cat : categories[0]?.id ?? null)); }} className={btnPrimary}>
           <Plus className="size-5" /> ເພີ່ມສິນຄ້າ
         </button>
       </PageHeader>
@@ -354,14 +358,19 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
               {err && <p className="rounded-xl bg-chili-faint px-4 py-3 text-chili">{err}</p>}
               <div className="flex gap-3 pt-1">
                 {draft.id && (
-                  <button onClick={remove} className={btnDanger} title="ສິນຄ້າທີ່ເຄີຍຂາຍແລ້ວ ຈະຖືກປິດຂາຍແທນການລຶບ">
-                    <Trash2 className="size-5" /> ລຶບ
+                  <button onClick={remove} onBlur={() => setConfirmDel(false)} className={confirmDel ? tw(btnDanger, "bg-chili text-white active:bg-chili") : btnDanger}>
+                    <Trash2 className="size-5" /> {confirmDel ? "ແຕະອີກເທື່ອ ເພື່ອລຶບ" : "ລຶບ"}
                   </button>
                 )}
                 <button onClick={save} disabled={saving || !draft.name || (draft.multi ? !VARIANT_NAMES.some((n) => draft.variants[n].on && draft.variants[n].price) : !draft.price)} className={tw(btnPrimary, "ml-auto min-w-36")}>
                   {saving ? "ກຳລັງບັນທຶກ…" : "ບັນທຶກ"}
                 </button>
               </div>
+              {confirmDel && (
+                <p className="text-sm text-muted">
+                  ລຶບແລ້ວກູ້ຄືນບໍ່ໄດ້ — ບິນ ແລະ ລາຍງານເກົ່າບໍ່ປ່ຽນ. ຖ້າພຽງແຕ່ຢາກເຊົາຂາຍຊົ່ວຄາວ ໃຫ້ປິດ “ສະແດງໃນໜ້າຂາຍ” ແທນ.
+                </p>
+              )}
             </div>
           </div>
         )}
