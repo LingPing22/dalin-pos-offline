@@ -8,6 +8,7 @@ import { computeTotals } from "./pricing";
 import { DAY, HOUR, addMonths, fromDateKey, startOfDay, startOfMonth, toDateKey } from "./time";
 import { DEFAULT_SETTINGS, LOCK_MINUTES, VARIANT_NAMES, lineName, type Variant, type PaymentMethod, type PosCategory, type PosProduct, type ReceiptData, type Role, type ShopSettings } from "./types";
 import { STARTER_CATEGORIES, STARTER_MENU, generateDemo } from "./demo";
+import { planDrinkMenu, starterDrink, withVariants, type DrinkChange } from "./drink-menu";
 import { DEFAULT_PINS, isWeakPin } from "./pin";
 import type { Session } from "./session";
 
@@ -78,10 +79,8 @@ async function seedMenu() {
   await db.products.bulkAdd(
     STARTER_MENU.map(([ci, name, price, cost, emoji, color], i) => ({
       categoryId: catIds[ci],
-      name,
+      ...starterDrink(name, price, cost),
       sku: `P${String(i + 1).padStart(3, "0")}`,
-      price,
-      cost,
       emoji,
       color,
       image: null,
@@ -294,6 +293,30 @@ export async function saveProduct(d: ProductInput) {
 }
 
 /** Products already on bills are hidden instead of deleted, so history stays intact. */
+/** What "ຈັດເມນູເຄື່ອງດື່ມ" would change (nothing is saved) */
+export async function previewDrinkMenu(): Promise<DrinkChange[]> {
+  await ensureReady();
+  return planDrinkMenu((await getDb().products.toArray()).map((p) => ({ ...p, id: p.id! })));
+}
+
+/** Gives drinks their hot / iced / blended prices. Re-plans from the database, so it is never stale. */
+export async function applyDrinkMenu(): Promise<number> {
+  const db = getDb();
+  return db.transaction("rw", db.products, db.orders, async () => {
+    const changes = planDrinkMenu((await db.products.toArray()).map((p) => ({ ...p, id: p.id! })));
+    const now = Date.now();
+    for (const c of changes) {
+      await db.products.update(c.id, { ...withVariants(c.name, c.variants), ...(c.emoji && { emoji: c.emoji }), updatedAt: now });
+      for (const id of c.remove) {
+        const sold = await db.orders.filter((o) => o.items.some((i) => i.productId === id)).count();
+        if (sold) await db.products.update(id, { active: false, updatedAt: now });
+        else await db.products.delete(id);
+      }
+    }
+    return changes.length;
+  });
+}
+
 export async function deleteProduct(id: number): Promise<"deleted" | "hidden"> {
   const db = getDb();
   const used = await db.orders.filter((o) => o.items.some((i) => i.productId === id)).count();

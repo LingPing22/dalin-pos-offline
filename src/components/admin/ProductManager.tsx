@@ -8,6 +8,8 @@ import { fmt } from "@/lib/money";
 import { addCategory, deleteCategory, deleteProduct, getCategories, listProducts, saveProduct, updateCategory, type AdminProduct } from "@/lib/store";
 import { VARIANT_NAMES, choicesOf, typeFromName, type PosCategory } from "@/lib/types";
 import { VariantTag, variantStyle } from "@/components/VariantTag";
+import { stepPrice } from "@/lib/drink-menu";
+import { DrinkMenuTidy } from "@/components/admin/DrinkMenuTidy";
 
 const SWATCHES = ["#F3E6D8", "#FBE1C8", "#FCE6B8", "#F8F0C6", "#DDEBD3", "#E1EEF8", "#EDE7F6", "#F9D7DC", "#EEF1F6"];
 
@@ -36,7 +38,6 @@ const empty = (categoryId: number | null): Draft => ({
 });
 
 /** Typical café mark-ups, only used to pre-fill empty boxes */
-const SUGGEST_EXTRA: Record<string, number> = { ຮ້ອນ: 0, ເຢັນ: 5000, ປັ່ນ: 10000 };
 
 export function ProductManager({ initialProducts, initialCategories }: { initialProducts: AdminProduct[]; initialCategories: PosCategory[] }) {
   const [products, setProducts] = useState(initialProducts);
@@ -83,7 +84,7 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
     if (on)
       for (const n of VARIANT_NAMES) {
         const v = variants[n];
-        const suggest = base ? base + SUGGEST_EXTRA[n] - SUGGEST_EXTRA[named ?? "ຮ້ອນ"] : 0;
+        const suggest = base ? stepPrice(base, named ?? "ຮ້ອນ", n) : 0;
         variants[n] = {
           on: fresh && named ? n === named : v.on,
           price: v.price || (suggest > 0 ? String(suggest) : ""),
@@ -141,6 +142,7 @@ export function ProductManager({ initialProducts, initialCategories }: { initial
       </PageHeader>
 
       <div className="px-6 lg:px-8">
+        <DrinkMenuTidy products={products} onDone={reload} />
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <label className="relative flex-1 basis-60">
             <Search className="pointer-events-none absolute left-4 top-3.5 size-5 text-muted" />
